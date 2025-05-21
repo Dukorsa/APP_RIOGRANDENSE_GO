@@ -16,7 +16,7 @@ import (
 	"gioui.org/widget/material"
 	"golang.org/x/exp/shiny/materialdesign/icons" // Para ícones de visibilidade
 
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils"
 )

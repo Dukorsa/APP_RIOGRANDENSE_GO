@@ -18,7 +18,8 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // For type checking errors
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // For type checking errors
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"

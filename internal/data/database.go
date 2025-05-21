@@ -13,7 +13,7 @@ import (
 	gormlogger "gorm.io/gorm/logger" // Logger do GORM
 	"gorm.io/gorm/schema"            // Para NamingStrategy
 
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	"github.com/sirupsen/logrus" // Para usar com o logger do GORM

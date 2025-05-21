@@ -15,7 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger" // Para logar falhas críticas
 )
 

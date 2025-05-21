@@ -9,7 +9,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause" // Para Upsert (OnConflict)
 
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
+"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 )

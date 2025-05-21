@@ -16,8 +16,8 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"           // Para AuthenticatorInterface
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"           // Para Config
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // Para verificar ErrInvalidCredentials
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // Para verificar ErrInvalidCredentials
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"

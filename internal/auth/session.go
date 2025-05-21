@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services" // Para AuditLogService, se usado
 	"github.com/google/uuid"

@@ -18,7 +18,7 @@ import (
 	"golang.org/x/exp/shiny/materialdesign/icons" // Para ícones padrão
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models" // Para UserPublic ao receber params
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"

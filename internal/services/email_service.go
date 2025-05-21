@@ -14,8 +14,8 @@ import (
 	texttemplate "text/template" // Para templates de texto plano
 	"time"
 
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	// "github.com/jaytaylor/html2text" // Opcional: para converter HTML para texto plano
 	// "github.com/vanng822/go-premailer/premailer" // Opcional: para inlining de CSS
@@ -71,8 +71,7 @@ func NewEmailService(cfg *core.Config) (EmailService, error) { // Retorna interf
 	// na raiz do `emailTemplatesFS` com seus nomes base.
 	// Ex: `emailTemplatesFS.ReadFile("notification.html")`
 	// Portanto, `ParseFS` também usará nomes base.
-	htmlTmpl, err := template.New("html").ParseFS(emailTemplatesFS, filepath.Join(emailTemplatesBaseDir, "*.html"))
-	if err != nil {
+	htmlTmpl, err := template.New("html").ParseFS(emailTemplatesFS, "*.html")	if err != nil {
 		return nil, fmt.Errorf("falha ao parsear templates HTML de email de '%s': %w", emailTemplatesBaseDir, err)
 	}
 	textTmpl, err := texttemplate.New("text").ParseFS(emailTemplatesFS, filepath.Join(emailTemplatesBaseDir, "*.txt"))

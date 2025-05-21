@@ -6,7 +6,7 @@ import (
 
 	// "time" // Descomente se adicionar CreatedAt/UpdatedAt em DBRole
 
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	// "gorm.io/gorm" // Descomentado se GORM for usado diretamente aqui
 )
 

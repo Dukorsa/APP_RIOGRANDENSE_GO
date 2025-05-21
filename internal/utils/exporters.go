@@ -13,8 +13,8 @@ import (
 
 	"github.com/xuri/excelize/v2" // Para exportação para XLSX
 
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"           // Para Config (ExportDir)
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // Para ErrExport, ErrInvalidInput
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // Para ErrExport, ErrInvalidInput
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 )
 

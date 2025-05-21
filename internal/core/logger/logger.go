@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time" // Adicionado para uso no CustomTextFormatter
 
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // Para Config
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config" // Para Config
 	"github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
