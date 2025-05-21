@@ -13,7 +13,8 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-
+    "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/navigation"
+    "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/theme"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
@@ -167,7 +168,10 @@ func (aw *AppWindow) Layout(gtx layout.Context) layout.Dimensions {
 	// 3. Spinner global (se ativo).
 	return layout.Stack{Alignment: layout.Center}.Layout(gtx,
 		// Camada 1: Conteúdo da Página Atual (do Router)
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+		layout.Expanded(func(gtx 
+			
+			
+			) layout.Dimensions {
 			if aw.router != nil {
 				return aw.router.Layout(gtx) // Desenha a página atual gerenciada pelo router.
 			}
@@ -317,23 +321,22 @@ func (aw *AppWindow) HandleLogout() {
 
 // StartGlobalLoading ativa o spinner de carregamento global.
 // Requer um `layout.Context` para iniciar a animação do spinner (para `gtx.Now`).
-func (aw *AppWindow) StartGlobalLoading(gtx layout.Context) {
+func (aw *AppWindow) StartGlobalLoading() {
 	if !aw.isGlobalLoading {
 		aw.isGlobalLoading = true
-		aw.globalSpinner.Start(gtx) // Passa o contexto para o spinner.
+		// aw.globalSpinner.Start() // O spinner do componente já lida com gtx no seu Layout
 		aw.Invalidate()
 	}
 }
 
 // StopGlobalLoading desativa o spinner de carregamento global.
-func (aw *AppWindow) StopGlobalLoading(gtx layout.Context) {
+func (aw *AppWindow) StopGlobalLoading() { // Removido gtx
 	if aw.isGlobalLoading {
 		aw.isGlobalLoading = false
-		aw.globalSpinner.Stop(gtx)
+		// aw.globalSpinner.Stop()
 		aw.Invalidate()
 	}
 }
-
 // ShowGlobalMessage exibe uma mensagem no topo (ou outra posição) da janela.
 // `messageType` pode ser "info", "error", "success", "warning".
 // `isError` é um booleano para simplificar a coloração (true para erro/warning, false para info/sucesso).

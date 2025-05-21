@@ -18,9 +18,8 @@ import (
 	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/navigation"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils"
 )
 

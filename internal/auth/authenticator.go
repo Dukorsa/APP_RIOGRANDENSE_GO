@@ -9,14 +9,17 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm" // Adicionado para aceitar *gorm.DB
+    "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/navigation"
+    "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/theme"
 
+	
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/repositories"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui" // Para ui.PageID
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui" // Para navigation.PageID
 	"github.com/sirupsen/logrus"
 )
 
@@ -26,7 +29,7 @@ type AuthResult struct {
 	Message    string
 	SessionID  string
 	UserData   *models.UserPublic
-	RedirectTo ui.PageID // Opcional: para onde redirecionar na UI
+	RedirectTo navigation.PageID // Opcional: para onde redirecionar na UI
 }
 
 // AuthenticatorInterface define a interface para operações de autenticação.

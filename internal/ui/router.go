@@ -5,7 +5,8 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/widget/material"
-
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/navigation"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/theme"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
@@ -66,9 +67,9 @@ type Router struct {
 	cfg       *core.Config    // Configurações globais.
 	appWindow *AppWindow      // Referência à janela principal para callbacks (ex: Invalidate, ShowMessage).
 
-	pages          map[PageID]Page // Mapa de PageIDs para instâncias de Page registradas.
-	currentPageID  PageID          // ID da página atualmente ativa.
-	previousPageID PageID          // ID da página anterior (para funcionalidade de "voltar" simples).
+	pages          map[navigation.PageID]navigation.Page // Mapa de PageIDs para instâncias de Page registradas.
+	currentPageID  navigation.PageID          // ID da página atualmente ativa.
+	previousPageID navigation.PageID          // ID da página anterior (para funcionalidade de "voltar" simples).
 	// currentPageParams interface{} // Parâmetros passados para a página atual (já tratados em OnNavigatedTo).
 
 	// Serviços centralizados para acesso pelas páginas através do router,
@@ -131,7 +132,7 @@ func NewRouter(
 
 // Register associa um PageID a uma instância de Page.
 // É chamado pela AppWindow ao inicializar as páginas.
-func (r *Router) Register(id PageID, page Page) {
+func (r *Router) Register(id navigation.PageID, page navigation.Page) {
 	if page == nil {
 		appLogger.Warnf("Router: Tentativa de registrar uma página nula para PageID: %v. Ignorando.", id)
 		return
@@ -148,7 +149,7 @@ func (r *Router) Register(id PageID, page Page) {
 
 // NavigateTo muda a página ativa para a página com o `id` fornecido.
 // `params` são os dados passados para o método `OnNavigatedTo` da nova página.
-func (r *Router) NavigateTo(id PageID, params interface{}) {
+func (r *Router) NavigateTo(id navigation.PageID, params interface{}) {
 	// Evita navegação redundante se já estiver na página e os parâmetros forem os mesmos.
 	// A comparação de `params` pode ser complexa se forem structs ou slices.
 	// Por simplicidade, apenas verifica o ID. Se a lógica de `OnNavigatedTo` for idempotente,
@@ -247,7 +248,7 @@ func (r *Router) PreviousPageID() PageID { return r.previousPageID }
 
 // GetAppWindow retorna a instância da AppWindow, permitindo que as páginas
 // interajam com funcionalidades globais da janela (ex: Invalidate, ShowGlobalMessage).
-func (r *Router) GetAppWindow() *AppWindow { return r.appWindow }
+func (r *Router) GetAppWindow() navigation.AppWindowInterface { return r.appWindow }
 
 // GetTheme retorna o tema Material Design global da aplicação.
 func (r *Router) GetTheme() *material.Theme { return r.th }

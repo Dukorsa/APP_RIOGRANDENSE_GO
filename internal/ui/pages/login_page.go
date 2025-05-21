@@ -17,11 +17,11 @@ import (
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"           // Para AuthenticatorInterface
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
+	
 	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // Para verificar ErrInvalidCredentials
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/navigation"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 )
 
 // LoginPage gerencia a UI para a tela de login.

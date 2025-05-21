@@ -16,22 +16,19 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"golang.org/x/exp/shiny/materialdesign/icons" // Para ícones padrão
-
+    "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/navigation"
+    "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/theme"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models" // Para UserPublic ao receber params
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
-
-	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components" // Se MainAppLayout tivesse seu próprio spinner
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/navigation"
 )
 
 // ModuleConfig define a configuração para cada módulo/item na sidebar.
 type ModuleConfig struct {
-	ID                 ui.PageID
+	ID                 navigation.PageID
 	Title              string
 	Icon               *widget.Icon
 	RequiredPermission auth.Permission
@@ -51,12 +48,12 @@ type MainAppLayout struct {
 	permManager    *auth.PermissionManager
 	sessionManager *auth.SessionManager
 
-	currentModuleID ui.PageID
+	currentModuleID navigation.PageID
 	sidebarModules  []ModuleConfig
 	sidebarClicks   []widget.Clickable
 	logoutBtn       widget.Clickable
 
-	modulePages map[ui.PageID]ui.Page
+	modulePages map[navigation.PageID]ui.Page
 
 	showLogoutConfirm bool
 	logoutYesBtn      widget.Clickable
@@ -88,7 +85,7 @@ func NewMainAppLayout(
 		auditService:   router.AuditLogService(),
 		permManager:    permMan,
 		sessionManager: sessMan,
-		modulePages:    make(map[ui.PageID]ui.Page),
+		modulePages:    make(map[navigation.PageID]ui.Page),
 	}
 
 	ml.modulePages[ui.PageCNPJ] = NewCNPJPage(ml.router, ml.cfg, ml.cnpjService, ml.networkService, ml.permManager, ml.sessionManager)
@@ -189,7 +186,7 @@ func (ml *MainAppLayout) OnNavigatedFrom() {
 	ml.currentUserData = nil
 }
 
-func (ml *MainAppLayout) getModulePage(moduleID ui.PageID) ui.Page {
+func (ml *MainAppLayout) getModulePage(moduleID navigation.PageID) ui.Page {
 	if moduleID == ui.PageNone {
 		return &PlaceholderPage{Title: "Nenhum Módulo Selecionado"}
 	}
