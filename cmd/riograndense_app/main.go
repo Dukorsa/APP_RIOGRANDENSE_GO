@@ -13,12 +13,12 @@ import (
 	"gioui.org/widget/material" // Um tema de widgets Material Design.
 
 	// Imports internos do seu projeto
-	"github.com/seu_usuario/riograndense_gio/internal/auth"                  // Exemplo de import de pacote de autenticação
-	"github.com/seu_usuario/riograndense_gio/internal/core"                  // Para configurações
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger" // Alias para o seu logger customizado
-	"github.com/seu_usuario/riograndense_gio/internal/data"                  // Para configuração do banco de dados
-	"github.com/seu_usuario/riograndense_gio/internal/services"              // Para os serviços da aplicação
-	"github.com/seu_usuario/riograndense_gio/internal/ui"                    // Para a UI principal e o router
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"                  // Exemplo de import de pacote de autenticação
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"                  // Para configurações
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger" // Alias para o seu logger customizado
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data"                  // Para configuração do banco de dados
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"              // Para os serviços da aplicação
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"                    // Para a UI principal e o router
 )
 
 func main() {
