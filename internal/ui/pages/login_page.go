@@ -21,7 +21,7 @@ import (
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 )
 
 // LoginPage gerencia a UI para a tela de login.

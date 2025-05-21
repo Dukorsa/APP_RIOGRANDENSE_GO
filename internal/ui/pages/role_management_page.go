@@ -25,7 +25,7 @@ import (
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 )
 
 // RoleManagementPage gerencia a UI para Roles (Perfis) e suas Permissões.
