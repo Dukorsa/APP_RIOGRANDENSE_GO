@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bem-vindo(a) ao {{.AppName}}!</title>
+    <style>
+        /* Estilos Gerais e Resets */
+        body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif; }
+        table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+        img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+        body { height: 100% !important; margin: 0 !important; padding: 0 !important; width: 100% !important; background-color: #f4f4f4; }
+        
+        /* Supondo que .Colors é um mapa[string]string passado para o template */
+        a { color: {{.Colors.Primary | default "#1A659E"}}; text-decoration: underline; }
+        a:hover { color: {{.Colors.PrimaryDark | default "#0F4C7B"}}; text-decoration: none; }
+
+        /* Container Principal */
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid {{.Colors.Border | default "#DEE2E6"}};
+        }
+
+        /* Cabeçalho */
+        .header {
+            background-color: {{.Colors.Primary | default "#1A659E"}};
+            padding: 30px 20px;
+            text-align: center;
+            border-bottom: 4px solid {{.Colors.PrimaryDark | default "#0F4C7B"}};
+        }
+        .header h1 {
+            margin: 0;
+            color: #ffffff;
+            font-size: 26px;
+            font-weight: 600;
+        }
+
+        /* Corpo do Email */
+        .content {
+            padding: 35px 30px;
+            color: {{.Colors.Text | default "#212529"}};
+            line-height: 1.7;
+            font-size: 15px;
+        }
+        .content h2 {
+            color: {{.Colors.PrimaryDark | default "#0F4C7B"}};
+            margin-top: 0;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+        .content p {
+            margin-bottom: 18px;
+        }
+        .content strong {
+            color: {{.Colors.Primary | default "#1A659E"}};
+            font-weight: 600;
+        }
+
+        /* Botão (Opcional) */
+        .button-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        .button {
+            display: inline-block;
+            background-color: {{.Colors.Primary | default "#1A659E"}};
+            color: #ffffff !important;
+            text-decoration: none !important;
+            padding: 14px 28px;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+        }
+        .button:hover {
+            background-color: {{.Colors.PrimaryLight | default "#4D8DBC"}};
+        }
+
+        /* Rodapé */
+        .footer {
+            background-color: {{.Colors.Grey100 | default "#f1f3f5"}};
+            padding: 25px 30px;
+            text-align: center;
+            font-size: 12px;
+            color: {{.Colors.TextMuted | default "#6C757D"}};
+            border-top: 1px solid {{.Colors.Border | default "#DEE2E6"}};
+        }
+        .footer p {
+            margin: 5px 0;
+        }
+        .footer a {
+            color: {{.Colors.Primary | default "#1A659E"}};
+        }
+
+    </style>
+</head>
+<body style="margin: 0 !important; padding: 0 !important; background-color: #f4f4f4;">
+
+    <!-- Hidden Preheader Text -->
+    <div style="display: none; font-size: 1px; color: #fefefe; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden;">
+        Seu cadastro em {{.AppName}} foi concluído com sucesso!
+    </div>
+
+    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+        <tr>
+            <td bgcolor="#f4f4f4" align="center" style="padding: 20px 10px;">
+                <!--[if (gte mso 9)|(IE)]>
+                <table align="center" border="0" cellspacing="0" cellpadding="0" width="600">
+                <tr>
+                <td align="center" valign="top" width="600">
+                <![endif]-->
+                <table border="0" cellpadding="0" cellspacing="0" class="container">
+                    <!-- Cabeçalho -->
+                    <tr>
+                        <td class="header">
+                            <h1>{{.AppName}}</h1>
+                        </td>
+                    </tr>
+                    <!-- Corpo -->
+                    <tr>
+                        <td class="content">
+                            <h2>Bem-vindo(a), {{.Username}}!</h2>
+                            <p>É um prazer ter você conosco! Seu cadastro no <strong>{{.AppName}}</strong> foi realizado com sucesso.</p>
+                            <p>Estamos felizes em tê-lo(a) a bordo e esperamos que aproveite todas as funcionalidades que preparamos.</p>
+
+                            {{if .AppURL}}
+                            <table border="0" cellpadding="0" cellspacing="0" width="100%" class="button-container">
+                                <tr>
+                                    <td align="center">
+                                        <a href="{{.AppURL}}" target="_blank" class="button">Acessar sua Conta</a>
+                                    </td>
+                                </tr>
+                            </table>
+                            {{else}}
+                            <p>Você já pode fazer login na aplicação utilizando seu nome de usuário (<strong>{{.Username}}</strong>) e a senha que cadastrou.</p>
+                            {{end}}
+
+                            <p>Se precisar de ajuda, tiver alguma dúvida ou sugestão, não hesite em nos contatar respondendo a este e-mail ou através do nosso canal de suporte:</p>
+                            <p><a href="mailto:{{.SupportEmail}}">{{.SupportEmail}}</a></p>
+                            <p>Obrigado por se juntar a nós!</p>
+                        </td>
+                    </tr>
+                    <!-- Rodapé -->
+                    <tr>
+                        <td class="footer">
+                            <p>Este e-mail foi enviado para {{.Email}}.</p>
+                            <p>
+                                © {{.Year}} {{.AppName}}. Todos os direitos reservados.<br>
+                                {{/* Se tiver links de privacidade/termos, adicione aqui usando .AppURL se disponível */}}
+                                {{/* <a href="{{.AppURL}}/privacy">Política de Privacidade</a> | <a href="{{.AppURL}}/terms">Termos de Uso</a> */}}
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+                <!--[if (gte mso 9)|(IE)]>
+                </td>
+                </tr>
+                </table>
+                <![endif]-->
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

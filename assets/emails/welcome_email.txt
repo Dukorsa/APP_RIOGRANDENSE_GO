@@ -1,0 +1,60 @@
+Bem-vindo ao {{.AppName}}!
+
+Olá {{.Username}},
+
+Seu cadastro foi realizado com sucesso! 🎉
+
+============================================
+📋 DETALHES DA CONTA
+============================================
+Aplicativo: {{.AppName}}
+Nome de usuário: {{.Username}}
+Email: {{.Email}}
+
+============================================
+{{if .AppURL}}
+🚀 ACESSE AGORA
+============================================
+Você pode acessar sua conta aqui:
+{{.AppURL}}
+{{else}}
+🔑 PRÓXIMOS PASSOS
+============================================
+Você já pode fazer login na aplicação utilizando seu nome de usuário ({{.Username}}) e a senha que cadastrou.
+{{end}}
+
+============================================
+📮 SUPORTE & AJUDA
+============================================
+Precisa de ajuda ou tem dúvidas?
+Entre em contato conosco:
+Email: {{.SupportEmail}}
+
+============================================
+🔒 DICAS DE SEGURANÇA
+============================================
+1. Nunca compartilhe sua senha.
+2. Use autenticação em dois fatores se disponível em futuras versões.
+3. Atualize sua senha periodicamente.
+
+============================================
+{{if .AppURL}}
+{{else}}
+📅 SUGESTÕES
+============================================
+1. Complete seu perfil, se aplicável.
+2. Explore as funcionalidades.
+3. Configure suas preferências, se houver.
+{{end}}
+
+Atenciosamente,
+Equipe {{.AppName}}
+
+--------------------------------------------
+Este é um e-mail automático.
+© {{.Year}} {{.AppName}}. Todos os direitos reservados.
+{{/* Se tiver link para descadastro ou política de privacidade: */}}
+{{/* {{if .AppURL}} */}}
+{{/* Para não receber mais e-mails: {{.AppURL}}/unsubscribe */}}
+{{/* Política de Privacidade: {{.AppURL}}/privacy */}}
+{{/* {{end}} */}}

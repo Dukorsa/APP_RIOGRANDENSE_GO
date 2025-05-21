@@ -1,0 +1,20 @@
+<!-- export.svg -->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 24 24"
+     width="24"
+     height="24"
+     fill="none"
+     stroke="currentColor"
+     stroke-width="2"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     class="feather feather-log-out">
+
+    <!-- Caixa/Janela de onde os dados saem -->
+    <path d="M15 3H9a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/>
+
+    <!-- Seta apontando para fora (direita e para cima) -->
+    <polyline points="10 17 15 12 10 7"/> <!-- Seta apontando para a direita, saindo do meio -->
+    <line x1="15" y1="12" x2="3" y2="12"/> <!-- Linha horizontal saindo para a esquerda (para indicar de onde vem) -->
+
+</svg>
