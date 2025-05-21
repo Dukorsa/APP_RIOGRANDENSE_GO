@@ -1,5 +1,5 @@
 // Em internal/services/auditlog_service.go
-package services
+package models
 
 import (
 	"errors" // Para errors.Is
@@ -14,6 +14,7 @@ import (
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/types" // Import para a interface LoggableSession
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/repositories"
+
 	// Para evitar a dependência direta de 'auth' por SessionManager,
 	// SessionManager também poderia ser uma interface aqui, se AuditLogService precisasse
 	// de mais do que apenas obter a sessão atual. Por ora, *auth.SessionManager é mantido.
@@ -41,7 +42,7 @@ type AuditLogService interface {
 type auditLogServiceImpl struct {
 	repo           repositories.AuditLogRepository
 	sessionManager *auth.SessionManager // Mantido como *auth.SessionManager para buscar a sessão.
-	                                    // O resultado (*auth.SessionData) implementa types.LoggableSession.
+	// O resultado (*auth.SessionData) implementa types.LoggableSession.
 }
 
 // NewAuditLogService cria uma nova instância de AuditLogService.

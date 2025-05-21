@@ -1,4 +1,3 @@
-// No arquivo: APP_RIOGRANDENSE_GO/appassets/embed.go
 package appassets
 
 import "embed"
