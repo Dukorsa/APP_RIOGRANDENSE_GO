@@ -5,8 +5,7 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/widget/material"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
-	// Se precisar de mais tipos para a interface, adicione as importações aqui.
+	configCore "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 )
 
 // PageID define um identificador único para cada página/view da aplicação.
@@ -50,7 +49,7 @@ type RouterInterface interface {
 	CurrentPageID() PageID
 	GetAppWindow() AppWindowInterface
 	GetTheme() *material.Theme // Para acesso ao tema global
-	GetConfig() *core.Config   // Para acesso à configuração global
+	GetConfig() *configCore.Config   // Para acesso à configuração global
 	// Adicione getters para serviços se as páginas os acessarem via router
 	// Ex: UserService() services.UserService
 }
