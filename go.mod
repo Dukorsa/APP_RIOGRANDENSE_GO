@@ -6,13 +6,12 @@ toolchain go1.24.2
 
 // Diretiva replace para forçar o Go a usar o repositório GitHub para todos os pacotes gioui.org,
 // utilizando uma versão consistente.
-replace gioui.org => github.com/gioui/gio v0.0.0-20240521123456-abcdef123456
 
 require (
 	// As dependências do Gio serão adicionadas aqui pelo 'go mod tidy'
 	// com a versão especificada na diretiva 'replace'.
 	// Deixe esta seção vazia de entradas 'gioui.org/...' inicialmente.
-
+	github.com/gioui/gio v0.8.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/shopspring/decimal v1.4.0
