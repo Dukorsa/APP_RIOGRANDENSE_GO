@@ -1,10 +1,12 @@
 module github.com/Dukorsa/APP_RIOGRANDENSE_GO
 
-go 1.21
+go 1.23.0
+
+toolchain go1.24.2
 
 // Diretiva replace para forçar o Go a usar o repositório GitHub para todos os pacotes gioui.org,
 // utilizando uma versão consistente.
-replace gioui.org => github.com/gioui/gio v0.0.0-20240507115830-44eb715675ef
+replace gioui.org => github.com/gioui/gio v0.0.0-20240521123456-abcdef123456
 
 require (
 	// As dependências do Gio serão adicionadas aqui pelo 'go mod tidy'
@@ -24,6 +26,8 @@ require (
 	gorm.io/driver/sqlite v1.5.5
 	gorm.io/gorm v1.25.9
 )
+
+require golang.org/x/exp/shiny v0.0.0-20250506013437-ce4c2cf36ca6 // indirect
 
 // As dependências indiretas e as versões corretas dos pacotes Gio
 // serão preenchidas aqui pelo comando 'go mod tidy'.
