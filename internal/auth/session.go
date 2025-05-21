@@ -1,3 +1,4 @@
+// Em internal/auth/session.go
 package auth
 
 import (
@@ -11,6 +12,7 @@ import (
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
 	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/types" // Import para a interface LoggableSession
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services" // Para AuditLogService, se usado
 	"github.com/google/uuid"
 )
@@ -28,6 +30,21 @@ type SessionData struct {
 	ExpiresAt    time.Time              `json:"expires_at"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
+
+// Métodos para implementar types.LoggableSession
+func (s *SessionData) GetID() string                      { return s.ID }
+func (s *SessionData) GetUserID() uuid.UUID               { return s.UserID }
+func (s *SessionData) GetUsername() string                { return s.Username }
+func (s *SessionData) GetRoles() []string                 { return s.Roles }
+func (s *SessionData) GetIPAddress() string               { return s.IPAddress }
+func (s *SessionData) GetUserAgent() string               { return s.UserAgent }
+func (s *SessionData) GetCreatedAt() time.Time            { return s.CreatedAt }
+func (s *SessionData) GetLastActivity() time.Time         { return s.LastActivity }
+func (s *SessionData) GetExpiresAt() time.Time            { return s.ExpiresAt }
+func (s *SessionData) GetMetadata() map[string]interface{} { return s.Metadata }
+
+// Garante que SessionData implementa a interface (verificação em tempo de compilação)
+var _ types.LoggableSession = (*SessionData)(nil)
 
 // IsExpired verifica se a sessão expirou com base no tempo de inatividade.
 func (s *SessionData) IsExpired(sessionTimeout time.Duration) bool {
@@ -130,7 +147,7 @@ func (sm *SessionManager) Shutdown() {
 		appLogger.Info("Goroutine de limpeza de sessões finalizada.")
 	}
 	sm.saveSessionsToFile()
-	SetCurrentSessionID("")
+	SetCurrentSessionID("") // Limpa o ID da sessão global ao desligar.
 	appLogger.Info("SessionManager shutdown concluído.")
 }
 
@@ -177,7 +194,7 @@ func (sm *SessionManager) GetSession(sessionID string) (*SessionData, error) {
 		appLogger.Infof("Sessão %s... (Usuário: %s) expirada durante GetSession. Removendo.", sessionID[:8], session.Username)
 		sm.lock.Lock()
 		delete(sm.sessions, sessionID)
-		if GetCurrentSessionID() == sessionID {
+		if GetCurrentSessionID() == sessionID { // Limpa a sessão global se for a que expirou.
 			SetCurrentSessionID("")
 		}
 		sm.lock.Unlock()
@@ -213,7 +230,6 @@ func (sm *SessionManager) DeleteSession(sessionID string) error {
 
 	session, exists := sm.sessions[sessionID]
 	if !exists {
-		// Não retorna erro se a sessão já não existe, pois o objetivo é garantir que ela não exista.
 		appLogger.Debugf("Tentativa de deletar sessão %s... que não existe ou já foi removida.", sessionID[:8])
 		return nil
 	}
@@ -221,7 +237,7 @@ func (sm *SessionManager) DeleteSession(sessionID string) error {
 	delete(sm.sessions, sessionID)
 	appLogger.Infof("Sessão %s... (Usuário: %s) removida.", sessionID[:8], session.Username)
 
-	if GetCurrentSessionID() == sessionID {
+	if GetCurrentSessionID() == sessionID { // Se a sessão global for a deletada, limpa-a.
 		SetCurrentSessionID("")
 	}
 	return nil
@@ -237,7 +253,7 @@ func (sm *SessionManager) DeleteAllUserSessions(userID uuid.UUID) (int, error) {
 	for id, s := range sm.sessions {
 		if s.UserID == userID {
 			sessionsToDelete = append(sessionsToDelete, id)
-			if usernameForLog == "" {
+			if usernameForLog == "" { // Pega o nome de usuário da primeira sessão encontrada para o log.
 				usernameForLog = s.Username
 			}
 		}
@@ -250,7 +266,7 @@ func (sm *SessionManager) DeleteAllUserSessions(userID uuid.UUID) (int, error) {
 
 	for _, id := range sessionsToDelete {
 		delete(sm.sessions, id)
-		if GetCurrentSessionID() == id {
+		if GetCurrentSessionID() == id { // Se a sessão global for uma das deletadas, limpa-a.
 			SetCurrentSessionID("")
 		}
 	}
@@ -268,7 +284,7 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 	for id, session := range sm.sessions {
 		if now.After(session.ExpiresAt) || session.IsExpired(sm.cfg.SessionTimeout) {
 			delete(sm.sessions, id)
-			if GetCurrentSessionID() == id {
+			if GetCurrentSessionID() == id { // Se a sessão global for uma das expiradas, limpa-a.
 				SetCurrentSessionID("")
 			}
 			appLogger.Infof("Limpeza: Sessão %s... (Usuário: %s) expirada e removida.", id[:8], session.Username)
@@ -310,7 +326,7 @@ func (sm *SessionManager) loadSessionsFromFile() {
 	var loadedSessions map[string]*SessionData
 	if err := json.Unmarshal(data, &loadedSessions); err != nil {
 		appLogger.Errorf("Erro ao decodificar JSON do arquivo de sessão '%s': %v. Iniciando sem sessões carregadas.", sm.sessionFilePath, err)
-		sm.sessions = make(map[string]*SessionData)
+		sm.sessions = make(map[string]*SessionData) // Reseta para um mapa vazio em caso de erro de parse.
 		return
 	}
 
@@ -320,10 +336,11 @@ func (sm *SessionManager) loadSessionsFromFile() {
 	expiredDuringLoad := 0
 
 	for id, session := range loadedSessions {
-		if session == nil {
+		if session == nil { // Checagem de segurança
 			appLogger.Warnf("Sessão nula encontrada no arquivo para ID %s. Ignorando.", id)
 			continue
 		}
+		// Verifica se a sessão já expirou.
 		if now.After(session.ExpiresAt) || session.IsExpired(sm.cfg.SessionTimeout) {
 			appLogger.Debugf("Sessão %s... (Usuário: %s) carregada, mas já expirada. Descartando.", id[:8], session.Username)
 			expiredDuringLoad++
@@ -336,12 +353,13 @@ func (sm *SessionManager) loadSessionsFromFile() {
 	appLogger.Infof("%d sessões válidas carregadas de '%s'. %d expiradas descartadas.", loadedCount, sm.sessionFilePath, expiredDuringLoad)
 }
 
-// saveSessionsToFile salva TODAS as sessões atualmente ativas no arquivo JSON.
+// saveSessionsToFile salva TODAS as sessões atualmente ativas (não expiradas) no arquivo JSON.
 func (sm *SessionManager) saveSessionsToFile() {
-	sm.lock.RLock()
+	sm.lock.RLock() // Leitura para copiar as sessões ativas.
 	sessionsToSave := make(map[string]*SessionData)
 	now := time.Now().UTC()
 	for id, session := range sm.sessions {
+		// Salva apenas sessões que não estão expiradas.
 		if !(now.After(session.ExpiresAt) || session.IsExpired(sm.cfg.SessionTimeout)) {
 			sessionsToSave[id] = session
 		}
@@ -355,7 +373,7 @@ func (sm *SessionManager) saveSessionsToFile() {
 
 	if len(sessionsToSave) == 0 {
 		appLogger.Info("Nenhuma sessão ativa para salvar. Verificando se arquivo antigo deve ser removido.")
-		if _, err := os.Stat(sm.sessionFilePath); err == nil {
+		if _, err := os.Stat(sm.sessionFilePath); err == nil { // Se o arquivo existe.
 			if err := os.Remove(sm.sessionFilePath); err == nil {
 				appLogger.Infof("Arquivo de sessão %s removido pois não há sessões ativas.", sm.sessionFilePath)
 			} else {
@@ -371,8 +389,9 @@ func (sm *SessionManager) saveSessionsToFile() {
 		return
 	}
 
+	// Escreve em um arquivo temporário e depois renomeia para atomicidade (ou próximo disso).
 	tempPath := sm.sessionFilePath + ".tmp"
-	err = os.WriteFile(tempPath, data, 0644)
+	err = os.WriteFile(tempPath, data, 0644) // Permissões padrão de arquivo.
 	if err != nil {
 		appLogger.Errorf("Erro ao escrever arquivo de sessão temporário '%s': %v", tempPath, err)
 		return
@@ -381,7 +400,7 @@ func (sm *SessionManager) saveSessionsToFile() {
 	err = os.Rename(tempPath, sm.sessionFilePath)
 	if err != nil {
 		appLogger.Errorf("Erro ao renomear arquivo de sessão temporário para '%s': %v", sm.sessionFilePath, err)
-		_ = os.Remove(tempPath)
+		_ = os.Remove(tempPath) // Tenta remover o temporário se a renomeação falhar.
 		return
 	}
 	appLogger.Infof("%d sessões ativas salvas em %s", len(sessionsToSave), sm.sessionFilePath)
