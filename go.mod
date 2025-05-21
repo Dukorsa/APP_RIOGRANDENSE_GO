@@ -1,4 +1,4 @@
-module github.com/Dukorsa/APP_RIOGRANDENSE_GO // Substitua por seu_usuario/seu_repo_name
+module github.com/Dukorsa/APP_RIOGRANDENSE_GO
 
 go 1.21 // Ou a versão mais recente do Go que você está usando
 
