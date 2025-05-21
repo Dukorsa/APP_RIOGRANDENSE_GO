@@ -1,12 +1,18 @@
 package ui
 
 import (
-	"image/color"
+
 	// "log" // Usar appLogger
 	// "os"  // Se precisar para os.Exit
 
+	"fmt"
+	"image"
+	"strings"
+	"time"
+
 	"gioui.org/app"
 	"gioui.org/font/gofont"
+	"gioui.org/io/key"
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -15,14 +21,14 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
-	"github.com/seu_usuario/riograndense_gio/internal/auth"
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/data/models" // Para UserPublic em HandleLoginSuccess
-	"github.com/seu_usuario/riograndense_gio/internal/services"
-	"github.com/seu_usuario/riograndense_gio/internal/ui/components" // Para LoadingSpinner
-	"github.com/seu_usuario/riograndense_gio/internal/ui/pages"      // Para instanciar páginas
-	"github.com/seu_usuario/riograndense_gio/internal/ui/theme"      // Para cores e tamanhos padrão
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models" // Para UserPublic em HandleLoginSuccess
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components" // Para LoadingSpinner
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/pages"      // Para instanciar páginas
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"      // Para cores e tamanhos padrão
 )
 
 // AppWindow gerencia a janela principal da aplicação e o roteamento de páginas.

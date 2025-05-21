@@ -9,9 +9,9 @@ import (
 
 	"gorm.io/gorm"
 	// Para preloading seletivo ou outras cláusulas
-	appErrors "github.com/seu_usuario/riograndense_gio/internal/core/errors"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/data/models"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 )
 
 // NetworkRepository define a interface para operações no repositório de redes.

@@ -3,12 +3,19 @@ package icons
 import (
 	"bytes"
 	"embed"
+	"fmt"
 	"image"
+	"image/color"
 	_ "image/png" // Para decodificar PNGs embutidos
+	"path/filepath"
 
 	// _ "image/svg" // Go padrão não decodifica SVG. Precisaria de lib externa.
 
+	"gioui.org/f32"
+	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/paint"
+	"gioui.org/unit"
 	"gioui.org/widget" // Para widget.Icon (Material Icons)
 
 	// Para ícones Material Design padrão do Gio
@@ -16,7 +23,7 @@ import (
 	// Os nomes aqui são exemplos e podem não existir.
 	"golang.org/x/exp/shiny/materialdesign/icons"
 
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 )
 
 //go:embed assets_img_icons_png/*.png

@@ -15,12 +15,12 @@ import (
 	"golang.org/x/text/encoding/charmap" // Para Latin-1
 	"golang.org/x/text/transform"
 
-	appErrors "github.com/seu_usuario/riograndense_gio/internal/core/errors"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/core" // Para Config
-	"github.com/seu_usuario/riograndense_gio/internal/data/models"
-	"github.com/seu_usuario/riograndense_gio/internal/data/repositories"
-	"github.com/seu_usuario/riograndense_gio/internal/auth" // Para SessionData e PermissionManager
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // Para Config
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/repositories"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth" // Para SessionData e PermissionManager
 )
 
 // FileType é um enum para os tipos de arquivo de importação

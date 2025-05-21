@@ -16,11 +16,12 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/seu_usuario/riograndense_gio/internal/core" // Para Config (PasswordMinLength)
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/ui/theme" // Para Cores
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // Para Config (PasswordMinLength)
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme" // Para Cores
+
 	// Para Ícones (se usar SVGs)
-	"github.com/seu_usuario/riograndense_gio/internal/utils" // Para SecurityValidator
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils" // Para SecurityValidator
 )
 
 const (

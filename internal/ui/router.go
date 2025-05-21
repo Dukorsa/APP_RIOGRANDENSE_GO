@@ -6,10 +6,10 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget/material"
 
-	"github.com/seu_usuario/riograndense_gio/internal/auth"
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/services"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
 )
 
 // PageID define um identificador único para cada página/view da aplicação.

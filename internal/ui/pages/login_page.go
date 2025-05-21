@@ -8,10 +8,10 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/ui" // Para acesso ao Router ou AppWindow
-	"github.com/seu_usuario/riograndense_gio/internal/ui/components"
-	"github.com/seu_usuario/riograndense_gio/internal/ui/theme"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui" // Para acesso ao Router ou AppWindow
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
 	// TODO: Importar serviço de autenticação
 )
 

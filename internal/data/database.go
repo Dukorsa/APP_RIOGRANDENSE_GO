@@ -1,7 +1,7 @@
 package data
 
 import (
-	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,9 +10,10 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger" // Logger do GORM
 
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/data/models"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
+	"github.com/sirupsen/logrus"
 )
 
 var dbInstance *gorm.DB // Instância global do GORM DB (ou *sql.DB se não usar GORM)

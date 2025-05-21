@@ -9,12 +9,13 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appErrors "github.com/seu_usuario/riograndense_gio/internal/core/errors" // Alias para evitar conflito
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/data/models"
-	"github.com/seu_usuario/riograndense_gio/internal/data/repositories"
-	"github.com/seu_usuario/riograndense_gio/internal/services"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // Alias para evitar conflito
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/repositories"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
+	"github.com/sirupsen/logrus"
 )
 
 // AuthResult encapsula o resultado de uma operação de autenticação.

@@ -14,9 +14,9 @@ import (
 	texttemplate "text/template" // Para templates de texto plano
 	"time"
 
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appErrors "github.com/seu_usuario/riograndense_gio/internal/core/errors"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	// "github.com/vanng822/go-premailer/premailer" // Opcional: para inlining de CSS
 	// "github.com/jaytaylor/html2text" // Opcional: para converter HTML para texto plano
 )

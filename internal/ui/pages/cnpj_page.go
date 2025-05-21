@@ -3,7 +3,6 @@ package pages
 import (
 	"fmt"
 	"image/color"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -11,21 +10,19 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/seu_usuario/riograndense_gio/internal/auth"
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appErrors "github.com/seu_usuario/riograndense_gio/internal/core/errors"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/data/models"
-	"github.com/seu_usuario/riograndense_gio/internal/services"
-	"github.com/seu_usuario/riograndense_gio/internal/ui"            // Para Router e PageID
-	"github.com/seu_usuario/riograndense_gio/internal/ui/components" // Para LoadingSpinner
-	"github.com/seu_usuario/riograndense_gio/internal/ui/theme"      // Para Cores
-	"github.com/seu_usuario/riograndense_gio/internal/utils"         // Para IsValidCNPJ
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"            // Para Router e PageID
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components" // Para LoadingSpinner
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"      // Para Cores
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils"         // Para IsValidCNPJ
 )
 
 // CNPJPage gerencia a interface para CNPJs.

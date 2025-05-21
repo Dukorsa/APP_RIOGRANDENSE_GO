@@ -13,13 +13,13 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/seu_usuario/riograndense_gio/internal/auth"
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/services"
-	"github.com/seu_usuario/riograndense_gio/internal/ui"
-	"github.com/seu_usuario/riograndense_gio/internal/ui/components"
-	"github.com/seu_usuario/riograndense_gio/internal/ui/theme"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
 	// "github.com/sqweek/dialog" // Biblioteca externa para diálogos nativos (exemplo)
 )
 

@@ -13,8 +13,8 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
-	"github.com/seu_usuario/riograndense_gio/internal/ui/theme" // Para cores padrão
-	// appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger" // Opcional, para debug
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme" // Para cores padrão
+	// appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger" // Opcional, para debug
 )
 
 const (

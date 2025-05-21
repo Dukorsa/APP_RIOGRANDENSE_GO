@@ -3,18 +3,20 @@ package services
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/repositories"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils" // Para SecurityValidator
 	"github.com/google/uuid"
-	"github.com/seu_usuario/riograndense_gio/internal/auth"
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appErrors "github.com/seu_usuario/riograndense_gio/internal/core/errors"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/data/models"
-	"github.com/seu_usuario/riograndense_gio/internal/data/repositories"
-	"github.com/seu_usuario/riograndense_gio/internal/utils" // Para SecurityValidator
-	"golang.org/x/crypto/bcrypt"                             // Para comparar hash no serviço, embora authenticator faça isso
+	"gorm.io/gorm"
+	// Para comparar hash no serviço, embora authenticator faça isso
 )
 
 // UserService define a interface para o serviço de usuário.

@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/seu_usuario/riograndense_gio/internal/core" // Para Config
-	"github.com/sirupsen/logrus"                            // TODO: go get github.com/sirupsen/logrus
-	"gopkg.in/natefinch/lumberjack.v2"                      // TODO: go get gopkg.in/natefinch/lumberjack.v2
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // Para Config
+	"github.com/sirupsen/logrus"                           // TODO: go get github.com/sirupsen/logrus
+	"gopkg.in/natefinch/lumberjack.v2"                     // TODO: go get gopkg.in/natefinch/lumberjack.v2
 )
 
 var (

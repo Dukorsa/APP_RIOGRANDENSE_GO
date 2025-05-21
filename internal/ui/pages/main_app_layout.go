@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"strings"
+
 	// "strings"
 	// "time"
 
@@ -17,15 +18,15 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/seu_usuario/riograndense_gio/internal/auth"
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 
-	// "github.com/seu_usuario/riograndense_gio/internal/data/models"
-	"github.com/seu_usuario/riograndense_gio/internal/services"
-	"github.com/seu_usuario/riograndense_gio/internal/ui"       // Para Router e PageID
-	"github.com/seu_usuario/riograndense_gio/internal/ui/theme" // Para Cores
-	// "github.com/seu_usuario/riograndense_gio/internal/ui/icons" // Para Ícones
+	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"       // Para Router e PageID
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme" // Para Cores
+	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/icons" // Para Ícones
 )
 
 // ModuleConfig define a configuração para cada módulo na sidebar.

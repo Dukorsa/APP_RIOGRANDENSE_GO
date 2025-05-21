@@ -5,9 +5,9 @@ import (
 
 	"gorm.io/gorm"
 
-	appErrors "github.com/seu_usuario/riograndense_gio/internal/core/errors" // Alias para evitar conflito
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger"
-	"github.com/seu_usuario/riograndense_gio/internal/data/models"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // Alias para evitar conflito
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 )
 
 // AuditLogRepository define a interface para operações no repositório de logs de auditoria.

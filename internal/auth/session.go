@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger" // Para AuditLog se SessionManager logar diretamente
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"              // Para AuditLogService
 	"github.com/google/uuid"
-	"github.com/seu_usuario/riograndense_gio/internal/core"
-	appErrors "github.com/seu_usuario/riograndense_gio/internal/core/errors"
-	appLogger "github.com/seu_usuario/riograndense_gio/internal/core/logger" // Para AuditLog se SessionManager logar diretamente
-	"github.com/seu_usuario/riograndense_gio/internal/services"              // Para AuditLogService
 )
 
 // SessionData armazena informações sobre uma sessão de usuário ativa.
