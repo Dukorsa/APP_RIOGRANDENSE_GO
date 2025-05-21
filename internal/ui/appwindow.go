@@ -21,7 +21,6 @@ import (
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/pages"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
 )
 
 // AppWindow gerencia a janela principal da aplicação, o tema e o roteamento de páginas.

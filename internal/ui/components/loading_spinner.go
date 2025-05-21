@@ -12,8 +12,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit" // Para unidades de display (dp, sp)
-
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme" // Para cores padrão
+	// Para cores padrão
 	// appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger" // Opcional, para debug
 )
 

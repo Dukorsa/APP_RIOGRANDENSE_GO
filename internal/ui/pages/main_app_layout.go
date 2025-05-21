@@ -23,9 +23,10 @@ import (
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models" // Para UserPublic ao receber params
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
 
 	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components" // Se MainAppLayout tivesse seu próprio spinner
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 )
 
 // ModuleConfig define a configuração para cada módulo/item na sidebar.

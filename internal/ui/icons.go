@@ -24,7 +24,7 @@ import (
 	"golang.org/x/exp/shiny/materialdesign/icons" // ATENÇÃO: Pacote obsoleto.
 
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
-	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme" // Para cores do tema, se necessário
+	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui" // Para cores do tema, se necessário
 )
 
 // ATENÇÃO: O pacote `golang.org/x/exp/shiny/materialdesign/icons` não é mais mantido
