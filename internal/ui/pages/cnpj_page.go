@@ -1,12 +1,12 @@
 package pages
 
 import (
+	"errors"
 	"fmt"
 	"image/color"
+	"sort"
 	"strconv"
 	"strings"
-
-	// "time" // Se precisar para formatação de data, mas CNPJ não tem tanta data visível
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -16,13 +16,22 @@ import (
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"            // Para Router e PageID
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components" // Para LoadingSpinner
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"      // Para Cores
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils"         // Para IsValidCNPJ
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils"
+)
+
+const (
+	cnpjColIndexCNPJ      = 0
+	cnpjColIndexNetworkID = 1
+	cnpjColIndexRegDate   = 2
+	cnpjColIndexStatus    = 3
+	cnpjNumTableHeaders   = 4
 )
 
 // CNPJPage gerencia a interface para CNPJs.
@@ -30,24 +39,24 @@ type CNPJPage struct {
 	router         *ui.Router
 	cfg            *core.Config
 	cnpjService    services.CNPJService
-	networkService services.NetworkService // Para validar NetworkID ou popular um ComboBox
+	networkService services.NetworkService
 	permManager    *auth.PermissionManager
 	sessionManager *auth.SessionManager
 
 	// Estado da UI
 	isLoading      bool
-	cnpjs          []*models.CNPJPublic // Lista completa de CNPJs carregados
-	filteredCNPJs  []*models.CNPJPublic // CNPJs após filtro (se houver filtro na página)
-	selectedCNPJID *uint64              // ID do CNPJ selecionado na lista para edição
-	statusMessage  string
+	cnpjs          []*models.CNPJPublic // Lista completa de CNPJs carregados do serviço
+	filteredCNPJs  []*models.CNPJPublic // CNPJs após filtro e ordenação para exibição
+	selectedCNPJID *uint64              // ID do CNPJ selecionado na lista para edição/exclusão
+	statusMessage  string               // Mensagem de feedback global para a página
 	messageColor   color.NRGBA
 
-	// Widgets de formulário
+	// Widgets de formulário para adicionar/editar CNPJ
 	cnpjInput      widget.Editor
 	networkIDInput widget.Editor
-	statusEnum     widget.Enum // Para o ComboBox de status Ativo/Inativo
+	statusEnum     widget.Enum // Para o ComboBox de status Ativo/Inativo no modo de edição
 
-	// Feedback para inputs
+	// Feedback para inputs do formulário
 	cnpjInputFeedback      string
 	networkIDInputFeedback string
 
@@ -55,22 +64,21 @@ type CNPJPage struct {
 	saveBtn          widget.Clickable
 	clearOrCancelBtn widget.Clickable
 
-	// Botões de ação da lista
+	// Botões de ação da lista (fora do formulário)
 	deleteBtn      widget.Clickable
 	refreshListBtn widget.Clickable
 
 	// Para a lista/tabela de CNPJs
-	cnpjList       layout.List
-	cnpjClickables []widget.Clickable
-	// TODO: Cabeçalhos clicáveis para ordenação se necessário
-	// tableHeaderClicks [4]widget.Clickable
-	// sortColumn        int
-	// sortAscending     bool
+	cnpjList          layout.List
+	cnpjClickables    []widget.Clickable // Um clickable por CNPJ na lista `filteredCNPJs`
+	tableHeaderClicks [cnpjNumTableHeaders]widget.Clickable
+	sortColumn        int
+	sortAscending     bool
 
 	spinner *components.LoadingSpinner
 
-	firstLoadDone bool
-	isEditing     bool // True se um CNPJ existente estiver carregado no formulário
+	firstLoadDone bool // Controla o carregamento inicial de dados
+	isEditing     bool // True se um CNPJ existente estiver carregado no formulário para edição
 }
 
 // NewCNPJPage cria uma nova instância da página de gerenciamento de CNPJs.
@@ -90,69 +98,81 @@ func NewCNPJPage(
 		permManager:    permMan,
 		sessionManager: sessMan,
 		cnpjList:       layout.List{Axis: layout.Vertical},
-		spinner:        components.NewLoadingSpinner(),
-		// sortColumn:     2, // Default sort por Data Cadastro (se existir)
-		// sortAscending:  false,
+		spinner:        components.NewLoadingSpinner(theme.Colors.Primary),
+		sortColumn:     cnpjColIndexRegDate, // Default: ordenar por Data de Cadastro
+		sortAscending:  false,               // Mais recentes primeiro
 	}
 	p.cnpjInput.SingleLine = true
 	p.cnpjInput.Hint = "XX.XXX.XXX/XXXX-XX"
 	p.networkIDInput.SingleLine = true
 	p.networkIDInput.Hint = "ID numérico da Rede"
-	p.networkIDInput.Filter = "0123456789" // Apenas números
+	p.networkIDInput.Filter = "0123456789" // Permite apenas dígitos
 
-	p.statusEnum.Set("Ativo", "Ativo") // Key, Label
-	p.statusEnum.Set("Inativo", "Inativo")
-	p.statusEnum.Value = "Ativo" // Default
+	// Configuração do Enum para o status (usado no modo de edição)
+	p.statusEnum.SetEnumValue("Ativo")   // Valor interno e label inicial
+	p.statusEnum.SetEnumValue("Inativo") // Adiciona a outra opção
+	p.statusEnum.Value = "Ativo"         // Define o valor padrão inicial
 
 	return p
 }
 
+// OnNavigatedTo é chamado quando a página se torna ativa.
 func (p *CNPJPage) OnNavigatedTo(params interface{}) {
 	appLogger.Info("Navegou para CNPJPage")
-	p.clearFormAndSelection(false) // Limpa formulário, mas não necessariamente a lista
+	p.clearFormAndSelection(true) // Limpa formulário e seleção da lista
+	p.statusMessage = ""
+
+	currentSession, errSess := p.sessionManager.GetCurrentSession()
+	if errSess != nil || currentSession == nil {
+		p.router.GetAppWindow().HandleLogout() // Força logout se sessão inválida
+		return
+	}
+	// Verifica permissão para visualizar CNPJs
+	if err := p.permManager.CheckPermission(currentSession, auth.PermCNPJView, nil); err != nil {
+		p.statusMessage = fmt.Sprintf("Acesso negado à página de CNPJs: %v", err)
+		p.messageColor = theme.Colors.Danger
+		p.cnpjs = []*models.CNPJPublic{}
+		p.applyFiltersAndSort()
+		p.router.GetAppWindow().Invalidate()
+		return
+	}
+
 	if !p.firstLoadDone {
-		p.loadCNPJs()
+		p.loadCNPJs(currentSession)
 		p.firstLoadDone = true
 	} else {
-		// A lista já pode estar carregada, talvez apenas aplicar filtros
-		p.applyFiltersAndSort() // Implementar se houver filtros
-		p.router.GetAppWindow().Invalidate()
-	}
-	// Verificar permissão de visualização
-	currentSession, _ := p.sessionManager.GetCurrentSession()
-	if err := p.permManager.CheckPermission(currentSession, auth.PermCNPJView, nil); err != nil {
-		p.statusMessage = fmt.Sprintf("Acesso negado: %v", err)
-		p.messageColor = theme.Colors.Danger
-		p.cnpjs = []*models.CNPJPublic{} // Limpa dados se não tem permissão
-		p.filteredCNPJs = []*models.CNPJPublic{}
+		p.loadCNPJs(currentSession) // Recarrega para ter dados frescos
 	}
 }
 
+// OnNavigatedFrom é chamado quando o router navega para fora desta página.
 func (p *CNPJPage) OnNavigatedFrom() {
 	appLogger.Info("Navegando para fora da CNPJPage")
-	p.selectedCNPJID = nil
-	p.isEditing = false
+	p.isLoading = false
+	p.spinner.Stop(p.router.GetAppWindow().Context()) // Garante que o spinner pare
 }
 
-func (p *CNPJPage) loadCNPJs() {
+// loadCNPJs carrega a lista de CNPJs do serviço.
+func (p *CNPJPage) loadCNPJs(currentSession *auth.SessionData) {
+	if p.isLoading {
+		return
+	}
 	p.isLoading = true
 	p.statusMessage = "Carregando CNPJs..."
 	p.messageColor = theme.Colors.TextMuted
 	p.spinner.Start(p.router.GetAppWindow().Context())
 	p.router.GetAppWindow().Invalidate()
 
-	go func() {
+	go func(sess *auth.SessionData) {
+		var loadedCNPJs []*models.CNPJPublic
 		var loadErr error
-		currentSession, errSess := p.sessionManager.GetCurrentSession()
-		if errSess != nil || currentSession == nil {
-			loadErr = fmt.Errorf("sessão de usuário inválida: %v", errSess)
+
+		// Permissão para visualizar já foi checada em OnNavigatedTo
+		cnpjsList, err := s.cnpjService.GetAllCNPJs(true, sess) // true = include inactive
+		if err != nil {
+			loadErr = fmt.Errorf("falha ao carregar CNPJs: %w", err)
 		} else {
-			cnpjs, err := p.cnpjService.GetAllCNPJs(true, currentSession) // true = include inactive
-			if err != nil {
-				loadErr = fmt.Errorf("falha ao carregar CNPJs: %w", err)
-			} else {
-				p.cnpjs = cnpjs
-			}
+			loadedCNPJs = cnpjsList
 		}
 
 		p.router.GetAppWindow().Execute(func() {
@@ -161,74 +181,107 @@ func (p *CNPJPage) loadCNPJs() {
 			if loadErr != nil {
 				p.statusMessage = loadErr.Error()
 				p.messageColor = theme.Colors.Danger
+				p.cnpjs = []*models.CNPJPublic{} // Limpa em caso de erro
 				appLogger.Errorf("Erro ao carregar CNPJs para CNPJPage: %v", loadErr)
 			} else {
-				p.statusMessage = fmt.Sprintf("%d CNPJs carregados.", len(p.cnpjs))
-				p.messageColor = theme.Colors.Success
-				p.applyFiltersAndSort() // Aplica filtros e ordenação após carregar
+				p.cnpjs = loadedCNPJs
+				if len(p.cnpjs) > 0 {
+					p.statusMessage = fmt.Sprintf("%d CNPJs carregados.", len(p.cnpjs))
+					p.messageColor = theme.Colors.Success
+				} else {
+					p.statusMessage = "Nenhum CNPJ encontrado."
+					p.messageColor = theme.Colors.Info
+				}
+				p.applyFiltersAndSort()
 			}
-			p.updateButtonStates()
+			p.updateButtonStates(sess)
 			p.router.GetAppWindow().Invalidate()
 		})
-	}()
+	}(currentSession)
 }
 
+// applyFiltersAndSort aplica filtros (se houver) e ordena a lista de CNPJs.
 func (p *CNPJPage) applyFiltersAndSort() {
-	// TODO: Implementar filtro e ordenação se a página tiver esses controles.
-	// Por agora, apenas copia todos.
-	p.filteredCNPJs = make([]*models.CNPJPublic, len(p.cnpjs))
-	copy(p.filteredCNPJs, p.cnpjs)
+	// Por enquanto, não há filtros de UI além de "includeInactive" (controlado no serviço).
+	// Apenas a ordenação é aplicada aqui.
+	tempFiltered := make([]*models.CNPJPublic, len(p.cnpjs))
+	copy(tempFiltered, p.cnpjs)
 
+	sort.SliceStable(tempFiltered, func(i, j int) bool {
+		c1 := tempFiltered[i]
+		c2 := tempFiltered[j]
+		var less bool
+		switch p.sortColumn {
+		case cnpjColIndexCNPJ:
+			less = c1.CNPJ < c2.CNPJ
+		case cnpjColIndexNetworkID:
+			less = c1.NetworkID < c2.NetworkID
+		case cnpjColIndexRegDate:
+			less = c1.RegistrationDate.Before(c2.RegistrationDate)
+		case cnpjColIndexStatus:
+			less = c1.Active && !c2.Active // Ativos primeiro
+		default:
+			less = c1.ID < c2.ID // Fallback para ordenação por ID
+		}
+		if !p.sortAscending {
+			return !less
+		}
+		return less
+	})
+
+	p.filteredCNPJs = tempFiltered
+	// Ajusta o tamanho do slice de clickables para corresponder aos CNPJs filtrados/ordenados.
 	if len(p.filteredCNPJs) != len(p.cnpjClickables) {
 		p.cnpjClickables = make([]widget.Clickable, len(p.filteredCNPJs))
 	}
 }
 
+// Layout é o método principal de desenho da página.
 func (p *CNPJPage) Layout(gtx layout.Context) layout.Dimensions {
-	th := p.router.GetAppWindow().th
+	th := p.router.GetAppWindow().Theme()
+	currentSession, _ := p.sessionManager.GetCurrentSession() // Para verificações de permissão
 
-	// Processar eventos dos widgets de formulário
-	for _, e := range p.cnpjInput.Events(gtx) {
-		if _, ok := e.(widget.ChangeEvent); ok {
-			p.formatCNPJInput()      // Formata enquanto digita
-			p.cnpjInputFeedback = "" // Limpa feedback ao digitar
-			p.updateButtonStates()
-		}
+	// Processar eventos dos inputs do formulário
+	if p.cnpjInput.Update(gtx) {
+		p.formatAndValidateCNPJInputUI()
+		p.statusMessage = "" // Limpa mensagem global ao digitar
+		p.updateButtonStates(currentSession)
 	}
-	for _, e := range p.networkIDInput.Events(gtx) {
-		if _, ok := e.(widget.ChangeEvent); ok {
-			p.networkIDInputFeedback = ""
-			p.updateButtonStates()
-		}
+	if p.networkIDInput.Update(gtx) {
+		p.validateNetworkIDInputUI()
+		p.statusMessage = ""
+		p.updateButtonStates(currentSession)
 	}
-	if p.statusEnum.Update(gtx) { // Se o valor do ComboBox mudar
-		p.updateButtonStates()
+	if p.statusEnum.Update(gtx) { // Se o valor do ComboBox de status mudar
+		p.updateButtonStates(currentSession)
+		p.statusMessage = ""
 	}
 
-	// Processar cliques nos botões
+	// Processar cliques nos botões principais
 	if p.saveBtn.Clicked(gtx) {
-		p.handleSaveCNPJ()
+		p.handleSaveCNPJ(currentSession)
 	}
 	if p.clearOrCancelBtn.Clicked(gtx) {
-		p.clearFormAndSelection(true)
+		p.clearFormAndSelection(true) // Limpa formulário e seleção da lista
+		p.updateButtonStates(currentSession)
 	}
 	if p.deleteBtn.Clicked(gtx) {
-		p.handleDeleteCNPJ()
+		p.handleDeleteCNPJ(currentSession)
 	}
 	if p.refreshListBtn.Clicked(gtx) {
-		p.loadCNPJs()
+		p.loadCNPJs(currentSession)
 	}
 
-	// Layout da página
+	// Estrutura da página: Formulário no topo, Lista abaixo
 	return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceEnd}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return p.layoutForm(gtx, th)
+			return p.layoutForm(gtx, th, currentSession)
 		}),
 		layout.Rigid(layout.Spacer{Height: theme.LargeVSpacer}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return p.layoutCNPJTable(gtx, th)
+			return p.layoutCNPJTable(gtx, th, currentSession)
 		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { // Mensagem de Status Global
 			if p.statusMessage != "" {
 				lbl := material.Body2(th, p.statusMessage)
 				lbl.Color = p.messageColor
@@ -236,60 +289,83 @@ func (p *CNPJPage) Layout(gtx layout.Context) layout.Dimensions {
 			}
 			return layout.Dimensions{}
 		}),
-		// Spinner (desenhado por último para ficar no topo se visível)
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if p.isLoading {
-				// Posicionar spinner (exemplo: centralizado na área da página)
-				// Este é um desafio em Gio. A AppWindow pode ter um spinner global
-				// ou usar layout.Stack aqui.
-				// return p.spinner.Layout(gtx)
-			}
-			return layout.Dimensions{}
-		}),
+		// Spinner de carregamento (se `isLoading` for true, deve ser sobreposto,
+		// geralmente por um layout.Stack na AppWindow ou no layout raiz desta página).
+		// Se p.isLoading { return p.spinner.Layout(gtx) }
 	)
 }
 
-// layoutForm desenha o formulário de entrada/edição.
-func (p *CNPJPage) layoutForm(gtx layout.Context, th *material.Theme) layout.Dimensions {
+// layoutForm desenha o formulário de entrada/edição de CNPJ.
+func (p *CNPJPage) layoutForm(gtx layout.Context, th *material.Theme, currentSession *auth.SessionData) layout.Dimensions {
 	title := "Novo CNPJ"
 	if p.isEditing {
 		title = "Editar CNPJ Selecionado"
 	}
+	// Verifica permissão para criar/editar. Botão Salvar será controlado por `updateButtonStates`.
+	canEditForm, _ := p.permManager.HasPermission(currentSession, auth.PermCNPJCreate, nil) // PermCreate para adicionar
+	if p.isEditing {
+		canEditForm, _ = p.permManager.HasPermission(currentSession, auth.PermCNPJUpdate, nil) // PermUpdate para editar
+	}
 
-	return material.Card(th, theme.Colors.BackgroundAlt, 主题.ElevationSmall, layout.UniformInset(unit.Dp(16)),
+	return material.Card(th, theme.Colors.Surface, theme.ElevationSmall, layout.UniformInset(unit.Dp(16)),
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceSides}.Layout(gtx,
 				layout.Rigid(material.Subtitle1(th, title).Layout),
 				layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions { // CNPJ Input
-					return p.labeledEditor(gtx, th, "CNPJ:*", &p.cnpjInput, p.cnpjInputFeedback, !p.isEditing)
+					// O input de CNPJ é sempre editável se o formulário estiver ativo para novo,
+					// mas não editável (readonly) se estiver editando um CNPJ existente.
+					// A biblioteca Gio não tem um modo "readonly" direto para Editor.
+					// Simula-se desabilitando interações ou mudando a aparência.
+					// Aqui, vamos controlar a "editabilidade" permitindo ou não foco.
+					cnpjEditorWidget := material.Editor(th, &p.cnpjInput, p.cnpjInput.Hint)
+					if p.isEditing { // Se editando, CNPJ não pode ser alterado.
+						// Visualmente, poderia ter um fundo diferente ou texto mais claro.
+						// Para impedir edição, não adicionar eventos ou usar um Label.
+						// Usar um Label para exibir o CNPJ no modo de edição:
+						return p.labeledInput(gtx, th, "CNPJ:*", material.Body1(th, p.cnpjInput.Text()).Layout, p.cnpjInputFeedback)
+					}
+					return p.labeledInput(gtx, th, "CNPJ:*", cnpjEditorWidget.Layout, p.cnpjInputFeedback)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions { // Network ID Input
-					return p.labeledEditor(gtx, th, "ID da Rede:*", &p.networkIDInput, p.networkIDInputFeedback, true)
+					netIDEditorWidget := material.Editor(th, &p.networkIDInput, p.networkIDInput.Hint)
+					return p.labeledInput(gtx, th, "ID da Rede:*", netIDEditorWidget.Layout, p.networkIDInputFeedback)
 				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { // Status ComboBox
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { // Status ComboBox (apenas no modo de edição)
 					if !p.isEditing {
 						return layout.Dimensions{}
-					} // Só mostra status na edição
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Spacing: layout.SpaceBetween}.Layout(gtx,
+					}
+					// Usar DropDown do material.Theme para um ComboBox.
+					selectedLabel := p.statusEnum.Value // O Value é o Label aqui porque SetEnumValue foi usado
+					return layout.Flex{Alignment: layout.Middle, Spacing: layout.SpaceBetween}.Layout(gtx,
 						layout.Rigid(material.Body1(th, "Status:").Layout),
-						layout.Rigid(material.DropDown(th, &p.statusEnum, material.Body1(th, p.statusEnum.Value).Layout).Layout(gtx)),
+						layout.Flexed(1, layout.Inset{Left: theme.DefaultVSpacer}.Layout(gtx, // Espaço para alinhar
+							material.DropDown(th, &p.statusEnum, material.Body1(th, selectedLabel).Layout).Layout,
+						)),
 					)
 				}),
 				layout.Rigid(layout.Spacer{Height: theme.LargeVSpacer}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions { // Botões do Formulário
-					saveButton := material.Button(th, &p.saveBtn, "Salvar")
-					if !p.isEditing {
-						saveButton.Text = "Adicionar Novo"
-					}
-
-					clearButton := material.Button(th, &p.clearOrCancelBtn, "Limpar")
+					saveButtonText := "Adicionar Novo"
 					if p.isEditing {
-						clearButton.Text = "Cancelar Edição"
+						saveButtonText = "Salvar Alterações"
 					}
+					saveButton := material.Button(th, &p.saveBtn, saveButtonText)
 
-					// Habilitar/Desabilitar botão Salvar
-					// saveButton.setEnable(p.canSaveForm()) // Implementar canSaveForm
+					clearButtonText := "Limpar Formulário"
+					if p.isEditing {
+						clearButtonText = "Cancelar Edição"
+					}
+					clearButton := material.Button(th, &p.clearOrCancelBtn, clearButtonText)
+
+					// Habilitar/Desabilitar visualmente botão Salvar (cor/opacidade)
+					// A lógica de clique já verificará se a ação é permitida.
+					if !canEditForm || !p.isFormValidForSave() { // isFormValidForSave verifica se os campos obrigatórios estão OK
+						saveButton.Style.TextColor = theme.Colors.TextMuted
+						saveButton.Style.Background = theme.Colors.Grey300
+					} else {
+						saveButton.Background = theme.Colors.Primary // Cor primária se habilitado
+					}
 
 					return layout.Flex{Spacing: layout.SpaceBetween}.Layout(gtx,
 						layout.Flexed(1, clearButton.Layout),
@@ -300,22 +376,15 @@ func (p *CNPJPage) layoutForm(gtx layout.Context, th *material.Theme) layout.Dim
 		}).Layout(gtx)
 }
 
-// labeledEditor é um helper para criar um Label + Editor + FeedbackLabel.
-func (p *CNPJPage) labeledEditor(gtx layout.Context, th *material.Theme, label string, editor *widget.Editor, feedbackText string, enabled bool) layout.Dimensions {
+// labeledInput é um helper para criar um Label + Widget de Input + FeedbackLabel.
+func (p *CNPJPage) labeledInput(gtx layout.Context, th *material.Theme, labelText string, inputWidget layout.Widget, feedbackText string) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical, Spacing: layout.Tight}.Layout(gtx,
-		layout.Rigid(material.Body1(th, label).Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, editor, editor.Hint)
-			// ed.setEnable(enabled) // GIO editor não tem SetEnabled, o widget pai controla.
-			// A interatividade do editor é controlada pela FocusPolicy e se ele recebe eventos.
-			// Se o widget pai estiver desabilitado, o editor também estará.
-			// Para desabilitar visualmente, pode-se mudar a cor de fundo/texto.
-			return ed.Layout(gtx)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		layout.Rigid(material.Body1(th, labelText).Layout),
+		layout.Rigid(inputWidget), // O widget de input já deve ter seu próprio padding/borda.
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { // Feedback de erro
 			if feedbackText != "" {
 				lbl := material.Body2(th, feedbackText)
-				lbl.Color = theme.Colors.Danger
+				lbl.Color = theme.Colors.Danger // Cor vermelha para erro.
 				return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, lbl.Layout)
 			}
 			return layout.Dimensions{}
@@ -324,18 +393,45 @@ func (p *CNPJPage) labeledEditor(gtx layout.Context, th *material.Theme, label s
 }
 
 // layoutCNPJTable desenha a lista/tabela de CNPJs.
-func (p *CNPJPage) layoutCNPJTable(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	// Cabeçalhos
+func (p *CNPJPage) layoutCNPJTable(gtx layout.Context, th *material.Theme, currentSession *auth.SessionData) layout.Dimensions {
 	headers := []string{"CNPJ", "Rede (ID)", "Data Cadastro", "Status"}
-	colWeights := []float32{0.3, 0.2, 0.3, 0.2}
+	colWeights := []float32{0.35, 0.15, 0.30, 0.20} // Ajustar pesos conforme necessário
 
-	// Renderização de linha
+	headerLayout := func(colIndex int, label string) layout.Widget {
+		return func(gtx C) D {
+			headerLabel := material.Body1(th, label)
+			headerLabel.Font.Weight = font.Bold
+			// Adicionar ícone de ordenação se esta coluna estiver sendo usada para ordenar
+			if p.sortColumn == colIndex {
+				// iconData := icons.NavigationArrowDropDown
+				// if p.sortAscending { iconData = icons.NavigationArrowDropUp }
+				// sortIcon, _ := widget.NewIcon(iconData)
+				// return layout.Flex{Alignment:layout.Middle}.Layout(gtx, layout.Rigid(headerLabel.Layout), layout.Rigid(material.Icon(th, sortIcon).Layout))
+			}
+			if p.tableHeaderClicks[colIndex].Clicked(gtx) {
+				if p.sortColumn == colIndex {
+					p.sortAscending = !p.sortAscending
+				} else {
+					p.sortColumn = colIndex
+					p.sortAscending = true
+				}
+				p.applyFiltersAndSort()
+				p.selectedCNPJID = nil // Limpa seleção ao reordenar
+				p.updateButtonStates(currentSession)
+			}
+			return headerLabel.Layout(gtx)
+		}
+	}
+
 	rowLayout := func(gtx layout.Context, index int, cnpj *models.CNPJPublic) layout.Dimensions {
 		isSelected := p.selectedCNPJID != nil && *p.selectedCNPJID == cnpj.ID
-		bgColor := theme.Colors.Background
+		bgColor := theme.Colors.Surface
 		if index%2 != 0 {
 			bgColor = theme.Colors.BackgroundAlt
 		}
+		if !cnpj.Active {
+			bgColor = theme.Colors.Grey100
+		} // Fundo diferente para inativos
 		if isSelected {
 			bgColor = theme.Colors.PrimaryLight
 		}
@@ -349,61 +445,66 @@ func (p *CNPJPage) layoutCNPJTable(gtx layout.Context, th *material.Theme) layou
 				textColor = theme.Colors.PrimaryText
 			}
 
-			return layout.Background{Color: bgColor}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			cnpjLbl := material.Body2(th, cnpj.FormatCNPJ())
+			cnpjLbl.Color = textColor
+			netIDLbl := material.Body2(th, fmt.Sprint(cnpj.NetworkID))
+			netIDLbl.Color = textColor
+			regDateLbl := material.Body2(th, cnpj.RegistrationDate.Format("02/01/06 15:04"))
+			regDateLbl.Color = textColor
+			statusLbl := material.Body2(th, boolToString(cnpj.Active, "Ativo", "Inativo"))
+			statusLbl.Color = textColor
+
+			return layout.Background{Color: bgColor}.Layout(gtx, func(gtx C) D {
 				return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
-					func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{}.Layout(gtx,
-							layout.Flexed(colWeights[0], material.Body2(th, cnpj.FormatCNPJ()).Layout),
-							layout.Flexed(colWeights[1], material.Body2(th, fmt.Sprint(cnpj.NetworkID)).Layout),
-							layout.Flexed(colWeights[2], material.Body2(th, cnpj.RegistrationDate.Format("02/01/2006 15:04")).Layout),
-							layout.Flexed(colWeights[3], material.Body2(th, boolToString(cnpj.Active, "Ativo", "Inativo")).Layout),
-						)
-					})
+					layout.Flex{}.Layout(gtx,
+						layout.Flexed(colWeights[0], cnpjLbl.Layout),
+						layout.Flexed(colWeights[1], netIDLbl.Layout),
+						layout.Flexed(colWeights[2], regDateLbl.Layout),
+						layout.Flexed(colWeights[3], statusLbl.Layout),
+					))
 			})
 		})
 	}
 
-	// Processar cliques na linha
 	for i := range p.filteredCNPJs {
 		if i >= len(p.cnpjClickables) {
 			break
-		} // Segurança
+		}
 		if p.cnpjClickables[i].Clicked(gtx) {
 			p.loadCNPJIntoForm(p.filteredCNPJs[i])
+			p.updateButtonStates(currentSession) // Atualiza estado dos botões com base na seleção
 		}
 	}
 
-	// Botão de Excluir (ao lado da lista, ou abaixo dela)
 	deleteButton := material.Button(th, &p.deleteBtn, "Excluir Selecionado")
-	deleteButton.Style.Font.Weight = font.Bold
-	// deleteButton.setEnable(p.selectedCNPJID != nil && p.canDelete()) // Implementar canDelete (permissão)
+	canDelete, _ := p.permManager.HasPermission(currentSession, auth.PermCNPJDelete, nil)
+	if !canDelete || p.selectedCNPJID == nil || !p.isEditing { // Botão só ativo se algo selecionado e com permissão
+		deleteButton.Style.TextColor = theme.Colors.TextMuted
+		deleteButton.Style.Background = theme.Colors.Grey300
+	}
 
 	return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceEnd}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { // Cabeçalho
-			return layout.Background{Color: theme.Colors.Grey100}.Layout(gtx,
-				func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
-						func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{}.Layout(gtx,
-								layout.Flexed(colWeights[0], material.Body1(th, headers[0]).Layout),
-								layout.Flexed(colWeights[1], material.Body1(th, headers[1]).Layout),
-								layout.Flexed(colWeights[2], material.Body1(th, headers[2]).Layout),
-								layout.Flexed(colWeights[3], material.Body1(th, headers[3]).Layout),
-							)
-						})
-				})
+		layout.Rigid(func(gtx C) D { // Cabeçalho
+			return layout.Background{Color: theme.Colors.Grey200}.Layout(gtx,
+				layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
+					layout.Flex{}.Layout(gtx,
+						layout.Flexed(colWeights[0], headerLayout(cnpjColIndexCNPJ, headers[0]).Layout),
+						layout.Flexed(colWeights[1], headerLayout(cnpjColIndexNetworkID, headers[1]).Layout),
+						layout.Flexed(colWeights[2], headerLayout(cnpjColIndexRegDate, headers[2]).Layout),
+						layout.Flexed(colWeights[3], headerLayout(cnpjColIndexStatus, headers[3]).Layout),
+					)))
 		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { // Lista
-			return p.cnpjList.Layout(gtx, len(p.filteredCNPJs), func(gtx layout.Context, index int) layout.Dimensions {
+		layout.Flexed(1, func(gtx C) D { // Lista
+			return p.cnpjList.Layout(gtx, len(p.filteredCNPJs), func(gtx C, index int) D {
 				if index < 0 || index >= len(p.filteredCNPJs) {
-					return layout.Dimensions{}
+					return D{}
 				}
 				return rowLayout(gtx, index, p.filteredCNPJs[index])
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { // Botões abaixo da lista
-			return layout.Flex{Spacing: layout.SpaceBetween}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { // Botões abaixo da lista
+			return layout.Flex{Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(deleteButton.Layout),
 				layout.Flexed(1, func(gtx C) D { return D{} }), // Espaçador
 				layout.Rigid(material.Button(th, &p.refreshListBtn, "Atualizar Lista").Layout),
@@ -412,41 +513,68 @@ func (p *CNPJPage) layoutCNPJTable(gtx layout.Context, th *material.Theme) layou
 	)
 }
 
-// --- Lógica de Ações ---
-func (p *CNPJPage) formatCNPJInput() {
-	text := p.cnpjInput.Text()
-	cleaned := models.CleanCNPJ(text) // Reutiliza helper do models
+// --- Lógica de Ações e Validações do Formulário ---
 
-	// Evitar reformatar se já estiver no formato máximo ou se a limpeza não mudou muito
-	// (para evitar loop de cursor com formatação muito agressiva)
-	if len(cleaned) > 14 {
-		cleaned = cleaned[:14]
-	}
+// formatAndValidateCNPJInputUI formata e valida o CNPJ no input da UI.
+func (p *CNPJPage) formatAndValidateCNPJInputUI() bool {
+	// A formatação em tempo real pode ser complexa de implementar perfeitamente
+	// com o widget.Editor padrão do Gio, especialmente para manter a posição do cursor.
+	// Uma validação mais simples no ChangeEvent e uma formatação/validação completa no submit é mais robusta.
+	// Por agora, vamos focar na validação.
+	cnpjRaw := p.cnpjInput.Text()
+	p.cnpjInputFeedback = "" // Limpa feedback anterior
 
-	formatted := cleaned // Inicia com limpo
-	if len(cleaned) > 2 {
-		formatted = cleaned[:2] + "." + cleaned[2:]
+	cleanedCNPJ, errClean := models.CNPJCreate{CNPJ: cnpjRaw}.CleanAndValidateCNPJ()
+	if errClean != nil {
+		if valErr, ok := errClean.(*appErrors.ValidationError); ok {
+			p.cnpjInputFeedback = valErr.Fields["cnpj"] // Pega mensagem específica do campo CNPJ
+		} else {
+			p.cnpjInputFeedback = errClean.Error()
+		}
+		return false
 	}
-	if len(cleaned) > 5 {
-		formatted = cleaned[:2] + "." + cleaned[2:5] + "." + cleaned[5:]
+	if !utils.IsValidCNPJ(cleanedCNPJ) {
+		p.cnpjInputFeedback = "CNPJ inválido (dígitos verificadores)."
+		return false
 	}
-	if len(cleaned) > 8 {
-		formatted = cleaned[:2] + "." + cleaned[2:5] + "." + cleaned[5:8] + "/" + cleaned[8:]
-	}
-	if len(cleaned) > 12 {
-		formatted = cleaned[:2] + "." + cleaned[2:5] + "." + cleaned[5:8] + "/" + cleaned[8:12] + "-" + cleaned[12:]
-	}
-
-	if p.cnpjInput.Text() != formatted {
-		// Salvar posição do cursor (desafio em Gio editor puro)
-		// p.cnpjInput.SetText(formatted) // Causa loop se não for cuidadoso
-		// Por agora, a limpeza e validação mais forte ocorrerá no submit
-	}
+	// Opcional: Atualizar o texto do editor com o CNPJ formatado (se a formatação for desejada no input)
+	// if p.cnpjInput.Text() != models.CNPJPublic{CNPJ: cleanedCNPJ}.FormatCNPJ() {
+	// p.cnpjInput.SetText(models.CNPJPublic{CNPJ: cleanedCNPJ}.FormatCNPJ())
+	// }
+	return true
 }
 
+// validateNetworkIDInputUI valida o Network ID no input da UI.
+func (p *CNPJPage) validateNetworkIDInputUI() bool {
+	netIDStr := strings.TrimSpace(p.networkIDInput.Text())
+	p.networkIDInputFeedback = "" // Limpa
+
+	if netIDStr == "" {
+		p.networkIDInputFeedback = "ID da Rede é obrigatório."
+		return false
+	}
+	_, errConv := strconv.ParseUint(netIDStr, 10, 64)
+	if errConv != nil {
+		p.networkIDInputFeedback = "ID da Rede deve ser um número positivo."
+		return false
+	}
+	return true
+}
+
+// isFormValidForSave verifica se o formulário está em um estado válido para salvar.
+func (p *CNPJPage) isFormValidForSave() bool {
+	// Verifica se os inputs (sem feedback de erro) estão preenchidos.
+	// A validação mais completa (dígitos CNPJ, existência NetworkID) é feita em handleSaveCNPJ.
+	return strings.TrimSpace(p.cnpjInput.Text()) != "" &&
+		strings.TrimSpace(p.networkIDInput.Text()) != "" &&
+		p.cnpjInputFeedback == "" && // Sem erro de formato no CNPJ
+		p.networkIDInputFeedback == "" // Sem erro de formato no Network ID
+}
+
+// loadCNPJIntoForm carrega os dados de um CNPJ selecionado para o formulário de edição.
 func (p *CNPJPage) loadCNPJIntoForm(cnpj *models.CNPJPublic) {
 	if cnpj == nil {
-		p.clearFormAndSelection(false)
+		p.clearFormAndSelection(false) // Apenas limpa o formulário
 		return
 	}
 	p.selectedCNPJID = &cnpj.ID
@@ -459,68 +587,67 @@ func (p *CNPJPage) loadCNPJIntoForm(cnpj *models.CNPJPublic) {
 	} else {
 		p.statusEnum.Value = "Inativo"
 	}
-	p.cnpjInputFeedback = ""
+	p.cnpjInputFeedback = "" // Limpa feedbacks ao carregar
 	p.networkIDInputFeedback = ""
-	p.updateButtonStates()
-	appLogger.Debugf("CNPJ ID %d carregado no formulário para edição.", cnpj.ID)
+	p.statusMessage = "" // Limpa mensagem global
+	// p.updateButtonStates() // Será chamado pelo clique na linha ou pelo Layout
+	appLogger.Debugf("CNPJ ID %d ('%s') carregado no formulário para edição.", cnpj.ID, cnpj.FormatCNPJ())
 }
 
-func (p *CNPJPage) clearFormAndSelection(clearListSelection bool) {
+// clearFormAndSelection limpa o formulário e, opcionalmente, a seleção na lista.
+func (p *CNPJPage) clearFormAndSelection(clearListSelectionAlso bool) {
 	p.cnpjInput.SetText("")
 	p.networkIDInput.SetText("")
-	p.statusEnum.Value = "Ativo" // Default
+	p.statusEnum.Value = "Ativo" // Reset para o valor padrão
 	p.cnpjInputFeedback = ""
 	p.networkIDInputFeedback = ""
-	p.selectedCNPJID = nil
 	p.isEditing = false
 
-	// if clearListSelection {
-	// TODO: Como desselecionar item na lista em Gio?
-	// Normalmente, apenas não desenhar o destaque de seleção.
-	// O estado p.selectedCNPJID = nil já cuida disso.
-	// }
-	p.updateButtonStates()
-	appLogger.Debug("Formulário de CNPJ e seleção limpos.")
+	if clearListSelectionAlso {
+		p.selectedCNPJID = nil
+	}
+	p.statusMessage = "" // Limpa mensagem global
+	// p.updateButtonStates() // Será chamado pelo Layout ou ação que o invocou
+	appLogger.Debug("Formulário de CNPJ limpo. Seleção da lista limpa: %t", clearListSelectionAlso)
 }
 
-func (p *CNPJPage) updateButtonStates() {
-	// Habilitar/desabilitar botão de salvar do formulário
-	canSave := p.cnpjInput.Text() != "" && p.networkIDInput.Text() != ""
-	// saveBtn.SetEnabled(canSave) // Em Gio, o botão não é desabilitado, mas a ação pode ser ignorada
-	// ou o visual do botão pode mudar.
-
-	// Habilitar/desabilitar botão de excluir
-	canDelete := p.selectedCNPJID != nil && p.isEditing
-	// deleteBtn.SetEnabled(canDelete)
-
-	// Forçar redesenho para que os botões reflitam o estado
+// updateButtonStates atualiza o estado visual (simulado) e lógico dos botões.
+func (p *CNPJPage) updateButtonStates(currentSession *auth.SessionData) {
+	// A lógica de habilitação real ocorre ao processar o clique, verificando permissões.
+	// Esta função pode ser usada para feedback visual (ex: mudar cor de botões "desabilitados").
+	// E para invalidar a UI para que os botões sejam redesenhados.
 	p.router.GetAppWindow().Invalidate()
 }
 
-func (p *CNPJPage) handleSaveCNPJ() {
-	// Validação
-	cnpjRaw := p.cnpjInput.Text()
+// handleSaveCNPJ lida com a submissão do formulário para criar ou atualizar um CNPJ.
+func (p *CNPJPage) handleSaveCNPJ(currentSession *auth.SessionData) {
+	if p.isLoading {
+		return
+	}
+
+	// Validação completa do formulário
+	validCNPJ := p.formatAndValidateCNPJInputUI()
+	validNetID := p.validateNetworkIDInputUI()
+	if !validCNPJ || !validNetID {
+		p.statusMessage = "Corrija os erros no formulário."
+		p.messageColor = theme.Colors.Warning
+		p.router.GetAppWindow().Invalidate()
+		return
+	}
+
+	cnpjRaw := p.cnpjInput.Text() // Já pode estar formatado ou não, CleanCNPJ lidará
 	networkIDStr := p.networkIDInput.Text()
-	isActive := p.statusEnum.Value == "Ativo"
+	isActive := p.statusEnum.Value == "Ativo" // Usado apenas no modo de edição
 
-	cleanedCNPJ, validationErr := models.CNPJCreate{CNPJ: cnpjRaw}.CleanAndValidateCNPJ() // Usa o helper
-	if validationErr != nil {
-		p.cnpjInputFeedback = validationErr.Error() // Assumindo que o erro é uma string simples
-		p.router.GetAppWindow().Invalidate()
-		return
-	}
-	if !utils.IsValidCNPJ(cleanedCNPJ) {
-		p.cnpjInputFeedback = "CNPJ inválido (dígitos verificadores)."
+	// Limpa CNPJ para o formato de 14 dígitos para validação e persistência
+	cleanedCNPJ := models.CleanCNPJ(cnpjRaw)
+	if !utils.IsValidCNPJ(cleanedCNPJ) { // Valida dígitos verificadores
+		p.cnpjInputFeedback = "CNPJ inválido (dígitos verificadores não conferem)."
 		p.router.GetAppWindow().Invalidate()
 		return
 	}
 
-	networkID, errConv := strconv.ParseUint(networkIDStr, 10, 64)
-	if errConv != nil || networkID == 0 {
-		p.networkIDInputFeedback = "ID da Rede inválido."
-		p.router.GetAppWindow().Invalidate()
-		return
-	}
+	networkID, _ := strconv.ParseUint(networkIDStr, 10, 64) // Já validado por validateNetworkIDInputUI
 
 	p.isLoading = true
 	p.statusMessage = "Salvando CNPJ..."
@@ -528,26 +655,27 @@ func (p *CNPJPage) handleSaveCNPJ() {
 	p.spinner.Start(p.router.GetAppWindow().Context())
 	p.router.GetAppWindow().Invalidate()
 
-	go func(isEditMode bool, cID *uint64, cnpjLabel, netIDLabel uint64, activeLabel bool) {
+	go func(isEditMode bool, currentCNPJID *uint64, cnpjLabel string, netIDLabel uint64, activeLabel bool, sess *auth.SessionData) {
 		var opErr error
 		var successMsg string
-		currentSession, _ := p.sessionManager.GetCurrentSession()
+		var resultingCNPJ *models.CNPJPublic
 
 		if isEditMode {
-			updateData := models.CNPJUpdate{NetworkID: &netIDLabel, Active: &activeLabel}
-			_, err := p.cnpjService.UpdateCNPJ(*cID, updateData, currentSession)
-			if err != nil {
-				opErr = err
+			if currentCNPJID == nil { // Segurança
+				opErr = errors.New("ID do CNPJ para edição não encontrado")
 			} else {
-				successMsg = fmt.Sprintf("CNPJ ID %d atualizado.", *cID)
+				// No modo de edição, o campo CNPJ não é alterado. Apenas NetworkID e Active.
+				updateData := models.CNPJUpdate{NetworkID: &netIDLabel, Active: &activeLabel}
+				resultingCNPJ, opErr = s.cnpjService.UpdateCNPJ(*currentCNPJID, updateData, sess)
+				if opErr == nil {
+					successMsg = fmt.Sprintf("CNPJ %s (ID %d) atualizado.", resultingCNPJ.FormatCNPJ(), *currentCNPJID)
+				}
 			}
-		} else {
-			createData := models.CNPJCreate{CNPJ: models.CleanCNPJ(p.cnpjInput.Text()), NetworkID: netIDLabel} // Passa limpo
-			newCNPJ, err := p.cnpjService.RegisterCNPJ(createData, currentSession)
-			if err != nil {
-				opErr = err
-			} else {
-				successMsg = fmt.Sprintf("CNPJ %s cadastrado.", newCNPJ.FormatCNPJ())
+		} else { // Modo de Criação
+			createData := models.CNPJCreate{CNPJ: cnpjLabel, NetworkID: netIDLabel} // Passa CNPJ limpo
+			resultingCNPJ, opErr = s.cnpjService.RegisterCNPJ(createData, sess)
+			if opErr == nil {
+				successMsg = fmt.Sprintf("CNPJ %s cadastrado com sucesso.", resultingCNPJ.FormatCNPJ())
 			}
 		}
 
@@ -555,36 +683,53 @@ func (p *CNPJPage) handleSaveCNPJ() {
 			p.isLoading = false
 			p.spinner.Stop(p.router.GetAppWindow().Context())
 			if opErr != nil {
-				p.statusMessage = fmt.Sprintf("Erro ao salvar: %v", opErr)
+				p.statusMessage = fmt.Sprintf("Erro ao salvar CNPJ: %v", opErr)
 				p.messageColor = theme.Colors.Danger
-				if strings.Contains(opErr.Error(), "CNPJ") {
-					p.cnpjInputFeedback = opErr.Error()
-				}
-				if strings.Contains(opErr.Error(), "Rede") {
+				// Tentar atribuir erro ao campo específico se possível
+				if valErr, ok := opErr.(*appErrors.ValidationError); ok {
+					if msg, found := valErr.Fields["cnpj"]; found {
+						p.cnpjInputFeedback = msg
+					}
+					if msg, found := valErr.Fields["network_id"]; found {
+						p.networkIDInputFeedback = msg
+					}
+				} else if errors.Is(opErr, appErrors.ErrConflict) {
+					p.cnpjInputFeedback = opErr.Error() // Exibe erro de conflito no campo CNPJ
+				} else if errors.Is(opErr, appErrors.ErrNotFound) && strings.Contains(opErr.Error(), "rede") {
 					p.networkIDInputFeedback = opErr.Error()
 				}
-
 			} else {
 				p.statusMessage = successMsg
 				p.messageColor = theme.Colors.Success
-				p.clearFormAndSelection(true)
-				p.loadCNPJs() // Recarrega a lista
+				p.clearFormAndSelection(true) // Limpa formulário e seleção
+				p.loadCNPJs(sess)             // Recarrega a lista de CNPJs
 			}
-			p.updateButtonStates()
+			p.updateButtonStates(sess)
 			p.router.GetAppWindow().Invalidate()
 		})
-	}(p.isEditing, p.selectedCNPJID, networkID, isActive) // Passa cópias dos valores
+	}(p.isEditing, p.selectedCNPJID, cleanedCNPJ, networkID, isActive, currentSession)
 }
 
-func (p *CNPJPage) handleDeleteCNPJ() {
-	if p.selectedCNPJID == nil || !p.isEditing {
-		p.statusMessage = "Nenhum CNPJ selecionado para excluir."
-		p.messageColor = theme.Colors.Warning
+// handleDeleteCNPJ lida com a exclusão de um CNPJ selecionado.
+func (p *CNPJPage) handleDeleteCNPJ(currentSession *auth.SessionData) {
+	if p.selectedCNPJID == nil || !p.isEditing || p.isLoading { // Botão deve estar desabilitado se não aplicável
+		if p.selectedCNPJID == nil {
+			p.statusMessage = "Nenhum CNPJ selecionado para excluir."
+			p.messageColor = theme.Colors.Warning
+			p.router.GetAppWindow().Invalidate()
+		}
+		return
+	}
+	// Permissão já deve ser verificada para habilitar o botão, mas checar novamente é seguro.
+	if errPerm := p.permManager.CheckPermission(currentSession, auth.PermCNPJDelete, nil); errPerm != nil {
+		p.statusMessage = "Você não tem permissão para excluir CNPJs."
+		p.messageColor = theme.Colors.Danger
+		p.router.GetAppWindow().Invalidate()
 		return
 	}
 
-	// TODO: Mostrar diálogo de confirmação
-	// Por agora, deleta diretamente.
+	// TODO: Implementar um diálogo de confirmação antes de excluir.
+	// Ex: p.router.GetAppWindow().ShowConfirmDialog("Excluir CNPJ", "Tem certeza?", func(confirmado bool){ if confirmado { ... }})
 
 	p.isLoading = true
 	p.statusMessage = "Excluindo CNPJ..."
@@ -592,10 +737,12 @@ func (p *CNPJPage) handleDeleteCNPJ() {
 	p.spinner.Start(p.router.GetAppWindow().Context())
 	p.router.GetAppWindow().Invalidate()
 
-	go func(idToDelete uint64) {
+	idToDelete := *p.selectedCNPJID // Copia o ID antes de entrar na goroutine
+	cnpjToLog := p.cnpjInput.Text() // Pega o CNPJ do formulário para log (pode ser o formatado)
+
+	go func(id uint64, cnpjLabel string, sess *auth.SessionData) {
 		var opErr error
-		currentSession, _ := p.sessionManager.GetCurrentSession()
-		err := p.cnpjService.DeleteCNPJ(idToDelete, currentSession)
+		err := s.cnpjService.DeleteCNPJ(id, sess)
 		if err != nil {
 			opErr = err
 		}
@@ -604,16 +751,19 @@ func (p *CNPJPage) handleDeleteCNPJ() {
 			p.isLoading = false
 			p.spinner.Stop(p.router.GetAppWindow().Context())
 			if opErr != nil {
-				p.statusMessage = fmt.Sprintf("Erro ao excluir: %v", opErr)
+				p.statusMessage = fmt.Sprintf("Erro ao excluir CNPJ '%s': %v", cnpjLabel, opErr)
 				p.messageColor = theme.Colors.Danger
+				if errors.Is(opErr, appErrors.ErrNotFound) { // Se já foi excluído por outra ação
+					p.statusMessage = fmt.Sprintf("CNPJ '%s' não encontrado (pode já ter sido excluído).", cnpjLabel)
+				}
 			} else {
-				p.statusMessage = fmt.Sprintf("CNPJ ID %d excluído com sucesso.", idToDelete)
+				p.statusMessage = fmt.Sprintf("CNPJ '%s' (ID %d) excluído com sucesso.", cnpjLabel, id)
 				p.messageColor = theme.Colors.Success
-				p.clearFormAndSelection(true)
-				p.loadCNPJs()
+				p.clearFormAndSelection(true) // Limpa formulário e seleção
+				p.loadCNPJs(sess)             // Recarrega a lista
 			}
-			p.updateButtonStates()
+			p.updateButtonStates(sess)
 			p.router.GetAppWindow().Invalidate()
 		})
-	}(*p.selectedCNPJID)
+	}(idToDelete, cnpjToLog, currentSession)
 }

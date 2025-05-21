@@ -3,12 +3,12 @@ package repositories
 import (
 	"errors"
 	"fmt"
-	"maps"
+	"maps" // Requer Go 1.21+
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
-	// Para preloading seletivo ou outras cláusulas
+	// "gorm.io/gorm/clause" // Para OnConflict, se fosse usar upsert
+
 	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
@@ -19,11 +19,12 @@ type NetworkRepository interface {
 	GetAll(includeInactive bool) ([]models.DBNetwork, error)
 	Search(term string, buyer *string, includeInactive bool) ([]models.DBNetwork, error)
 	GetByID(networkID uint64) (*models.DBNetwork, error)
-	GetByName(name string) (*models.DBNetwork, error)
+	GetByName(name string) (*models.DBNetwork, error) // name deve ser em minúsculas para busca
 	Create(networkData models.NetworkCreate, createdByUsername string) (*models.DBNetwork, error)
 	Update(networkID uint64, networkUpdateData models.NetworkUpdate, updatedByUsername string) (*models.DBNetwork, error)
 	ToggleStatus(networkID uint64, updatedByUsername string) (*models.DBNetwork, error)
-	BulkDelete(ids []uint64) (int64, error) // Retorna o número de redes excluídas
+	// BulkDelete realiza exclusão física. Retorna o número de redes efetivamente excluídas.
+	BulkDelete(ids []uint64) (deletedCount int64, err error)
 }
 
 // gormNetworkRepository é a implementação GORM de NetworkRepository.
@@ -40,33 +41,39 @@ func NewGormNetworkRepository(db *gorm.DB) NetworkRepository {
 }
 
 // GetAll busca todas as redes, opcionalmente incluindo inativas.
+// Ordena por nome (ASC).
 func (r *gormNetworkRepository) GetAll(includeInactive bool) ([]models.DBNetwork, error) {
 	var networks []models.DBNetwork
-	query := r.db.Order("name ASC")
+	query := r.db.Order("name ASC") // Nome já é minúsculo no DB, então a ordem é case-insensitive.
 
 	if !includeInactive {
 		query = query.Where("status = ?", true)
 	}
 
 	if err := query.Find(&networks).Error; err != nil {
-		appLogger.Errorf("Erro ao buscar todas as redes: %v", err)
+		appLogger.Errorf("Erro ao buscar todas as redes (includeInactive: %t): %v", includeInactive, err)
 		return nil, appErrors.WrapErrorf(err, "falha na recuperação da lista de redes (GORM)")
 	}
 	return networks, nil
 }
 
 // Search busca redes por termo (nome ou comprador) e opcionalmente por comprador.
+// A busca é case-insensitive. Ordena por nome (ASC).
 func (r *gormNetworkRepository) Search(term string, buyer *string, includeInactive bool) ([]models.DBNetwork, error) {
 	var networks []models.DBNetwork
 	query := r.db.Order("name ASC")
 
-	searchTerm := "%" + strings.ToLower(term) + "%" // Para busca case-insensitive com LIKE
+	// Termo de busca é convertido para minúsculas para LIKE case-insensitive.
+	// O campo `name` no DB já está em minúsculas.
+	// Para `buyer`, que está em Title Case, usamos LOWER() do DB.
+	searchTerm := "%" + strings.ToLower(strings.TrimSpace(term)) + "%"
 
-	// Usar funções LOWER do DB para busca case-insensitive
-	query = query.Where("LOWER(name) LIKE ? OR LOWER(buyer) LIKE ?", searchTerm, searchTerm)
+	if term != "" { // Só aplica o filtro de termo se não for vazio
+		query = query.Where("name LIKE ? OR LOWER(buyer) LIKE ?", searchTerm, searchTerm)
+	}
 
 	if buyer != nil && *buyer != "" {
-		searchBuyer := "%" + strings.ToLower(*buyer) + "%"
+		searchBuyer := "%" + strings.ToLower(strings.TrimSpace(*buyer)) + "%"
 		query = query.Where("LOWER(buyer) LIKE ?", searchBuyer)
 	}
 
@@ -75,7 +82,7 @@ func (r *gormNetworkRepository) Search(term string, buyer *string, includeInacti
 	}
 
 	if err := query.Find(&networks).Error; err != nil {
-		appLogger.Errorf("Erro na pesquisa de redes (termo='%s', comprador='%v'): %v", term, buyer, err)
+		appLogger.Errorf("Erro na pesquisa de redes (termo='%s', comprador='%v', includeInactive: %t): %v", term, buyer, includeInactive, err)
 		return nil, appErrors.WrapErrorf(err, "falha na operação de pesquisa de redes (GORM)")
 	}
 	return networks, nil
@@ -95,12 +102,15 @@ func (r *gormNetworkRepository) GetByID(networkID uint64) (*models.DBNetwork, er
 	return &network, nil
 }
 
-// GetByName busca uma rede específica pelo nome (case-insensitive).
+// GetByName busca uma rede específica pelo nome (minúsculo).
+// O nome da rede é armazenado em minúsculas no banco, então a busca é direta.
 func (r *gormNetworkRepository) GetByName(name string) (*models.DBNetwork, error) {
+	// Assume-se que `name` já foi normalizado para minúsculas pelo serviço antes de chamar este método.
+	if name == "" {
+		return nil, fmt.Errorf("%w: nome da rede não pode ser vazio para busca", appErrors.ErrInvalidInput)
+	}
 	var network models.DBNetwork
-	// GORM Where com string geralmente é case-sensitive por padrão em alguns DBs (como PostgreSQL).
-	// Para case-insensitive, usar funções do DB.
-	result := r.db.Where("LOWER(name) = LOWER(?)", name).First(&network)
+	result := r.db.Where("name = ?", name).First(&network) // Busca exata, case-sensitive no nome já em minúsculas
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: rede com nome '%s' não encontrada", appErrors.ErrNotFound, name)
@@ -112,52 +122,51 @@ func (r *gormNetworkRepository) GetByName(name string) (*models.DBNetwork, error
 }
 
 // Create cria uma nova rede no banco de dados.
-// Espera que networkData já tenha sido limpa e validada pelo serviço.
+// `networkData.Name` já deve estar em minúsculas e `networkData.Buyer` em Title Case, conforme `CleanAndValidate`.
 func (r *gormNetworkRepository) Create(networkData models.NetworkCreate, createdByUsername string) (*models.DBNetwork, error) {
-	// O serviço já deve ter chamado CleanAndValidate em networkData.
-	// O nome da rede em networkData.Name já deve estar em minúsculas, e Buyer em Title Case.
+	// Validação de formato e limpeza já devem ter sido feitas pelo serviço.
+	// A unicidade do nome (case-insensitive) também deve ser verificada pelo serviço antes de chamar Create.
+	// No entanto, a constraint unique no DB é a garantia final.
 
-	// Verificar se já existe uma rede com o mesmo nome (case-insensitive)
-	// GetByName já faz a busca case-insensitive.
-	_, err := r.GetByName(networkData.Name)
-	if err == nil { // Encontrou uma existente
-		appLogger.Warnf("Tentativa de criar rede com nome já existente: '%s'", networkData.Name)
+	// Verificar novamente a existência do nome (que já está em minúsculas em networkData.Name)
+	// para tratar condições de corrida, embora a constraint do DB seja a principal.
+	_, err := r.GetByName(networkData.Name) // networkData.Name já está normalizado
+	if err == nil {
+		appLogger.Warnf("Tentativa de criar rede com nome já existente (detectado no repo): '%s'", networkData.Name)
 		return nil, fmt.Errorf("%w: já existe uma rede cadastrada com o nome '%s'", appErrors.ErrConflict, networkData.Name)
 	}
-	if !errors.Is(err, appErrors.ErrNotFound) && err != nil { // Erro diferente de não encontrado
+	if !errors.Is(err, appErrors.ErrNotFound) && err != nil {
 		appLogger.Errorf("Erro ao verificar existência da rede '%s' antes de criar: %v", networkData.Name, err)
 		return nil, appErrors.WrapErrorf(err, "falha ao verificar existência da rede antes de criar (GORM)")
 	}
-	// Se chegou aqui, é appErrors.ErrNotFound, o que é bom.
+	// Se ErrNotFound, podemos prosseguir.
 
-	now := time.Now().UTC()
 	dbNetwork := models.DBNetwork{
 		Name:      networkData.Name,  // Já em minúsculas
 		Buyer:     networkData.Buyer, // Já em Title Case
 		Status:    true,              // Novas redes são ativas por padrão
 		CreatedBy: &createdByUsername,
-		UpdatedBy: &createdByUsername,
-		CreatedAt: now, // GORM também pode setar com default:now()
-		UpdatedAt: now, // GORM também pode setar com autoUpdateTime
+		UpdatedBy: &createdByUsername, // No momento da criação, UpdatedBy é o mesmo que CreatedBy
+		// CreatedAt e UpdatedAt são gerenciados por `autoCreateTime` e `autoUpdateTime` do GORM.
 	}
 
 	result := r.db.Create(&dbNetwork)
 	if result.Error != nil {
 		appLogger.Errorf("Erro ao criar rede '%s': %v", networkData.Name, result.Error)
-		// A constraint UNIQUE no GORM/DB deve pegar nomes duplicados se a verificação acima falhar por race condition.
+		// Verificar erro de constraint UNIQUE do DB.
 		if strings.Contains(strings.ToLower(result.Error.Error()), "unique constraint") ||
 			strings.Contains(strings.ToLower(result.Error.Error()), "duplicate key value violates unique constraint") {
-			return nil, fmt.Errorf("%w: já existe uma rede cadastrada com o nome '%s'", appErrors.ErrConflict, networkData.Name)
+			return nil, fmt.Errorf("%w: já existe uma rede cadastrada com o nome '%s' (conflito no DB)", appErrors.ErrConflict, networkData.Name)
 		}
 		return nil, appErrors.WrapErrorf(result.Error, "falha ao criar registro de rede (GORM)")
 	}
 
-	appLogger.Infof("Nova rede criada: '%s' por %s (ID: %d)", dbNetwork.Name, createdByUsername, dbNetwork.ID)
+	appLogger.Infof("Nova rede criada: '%s' (Comprador: %s) por %s (ID: %d)", dbNetwork.Name, dbNetwork.Buyer, createdByUsername, dbNetwork.ID)
 	return &dbNetwork, nil
 }
 
 // Update atualiza uma rede existente.
-// Espera que networkUpdateData já tenha sido limpa e validada pelo serviço.
+// `networkUpdateData` campos já devem estar limpos e normalizados pelo serviço.
 func (r *gormNetworkRepository) Update(networkID uint64, networkUpdateData models.NetworkUpdate, updatedByUsername string) (*models.DBNetwork, error) {
 	dbNetwork, err := r.GetByID(networkID)
 	if err != nil {
@@ -168,26 +177,16 @@ func (r *gormNetworkRepository) Update(networkID uint64, networkUpdateData model
 	changed := false
 
 	if networkUpdateData.Name != nil {
-		// O serviço já deve ter chamado CleanAndValidate em networkUpdateData.
-		// O nome em *networkUpdateData.Name já deve estar em minúsculas.
+		// `networkUpdateData.Name` já está em minúsculas.
 		if dbNetwork.Name != *networkUpdateData.Name {
-			// Verificar se o novo nome já está em uso por OUTRA rede
-			existingByName, errGet := r.GetByName(*networkUpdateData.Name)
-			if errGet == nil && existingByName.ID != networkID { // Encontrou e é de outra rede
-				appLogger.Warnf("Tentativa de atualizar rede ID %d para nome '%s' que já pertence à rede ID %d.", networkID, *networkUpdateData.Name, existingByName.ID)
-				return nil, fmt.Errorf("%w: já existe outra rede com o nome '%s'", appErrors.ErrConflict, *networkUpdateData.Name)
-			}
-			if errGet != nil && !errors.Is(errGet, appErrors.ErrNotFound) { // Erro ao verificar
-				appLogger.Errorf("Erro ao verificar nome '%s' para atualização da rede ID %d: %v", *networkUpdateData.Name, networkID, errGet)
-				return nil, appErrors.WrapErrorf(errGet, "falha ao verificar nome para atualização de rede (GORM)")
-			}
+			// O serviço já deve ter verificado se o novo nome conflita com outra rede.
+			// Aqui, apenas aplicamos. A constraint do DB pegaria conflitos de corrida.
 			updates["name"] = *networkUpdateData.Name
 			changed = true
 		}
 	}
 	if networkUpdateData.Buyer != nil {
-		// O serviço já deve ter chamado CleanAndValidate em networkUpdateData.
-		// O comprador em *networkUpdateData.Buyer já deve estar em Title Case.
+		// `networkUpdateData.Buyer` já está em Title Case.
 		if dbNetwork.Buyer != *networkUpdateData.Buyer {
 			updates["buyer"] = *networkUpdateData.Buyer
 			changed = true
@@ -206,19 +205,19 @@ func (r *gormNetworkRepository) Update(networkID uint64, networkUpdateData model
 	}
 
 	updates["updated_by"] = &updatedByUsername
-	// updates["updated_at"] = time.Now().UTC() // GORM autoUpdateTime deve cuidar disso
+	// `updated_at` é gerenciado por `autoUpdateTime` do GORM.
 
 	result := r.db.Model(&dbNetwork).Updates(updates)
 	if result.Error != nil {
 		appLogger.Errorf("Erro ao atualizar rede ID %d: %v", networkID, result.Error)
 		if strings.Contains(strings.ToLower(result.Error.Error()), "unique constraint") && networkUpdateData.Name != nil {
-			return nil, fmt.Errorf("%w: já existe outra rede com o nome '%s'", appErrors.ErrConflict, *networkUpdateData.Name)
+			return nil, fmt.Errorf("%w: já existe outra rede com o nome '%s' (conflito no DB)", appErrors.ErrConflict, *networkUpdateData.Name)
 		}
 		return nil, appErrors.WrapErrorf(result.Error, "falha na atualização do registro da rede (GORM)")
 	}
 
-	appLogger.Infof("Rede ID %d ('%s') atualizada por %s. Campos: %v", networkID, dbNetwork.Name, updatedByUsername, maps.Keys(updates)) // Go 1.21+ maps.Keys
-	return dbNetwork, nil
+	appLogger.Infof("Rede ID %d ('%s') atualizada por %s. Campos: %v", networkID, dbNetwork.Name, updatedByUsername, maps.Keys(updates))
+	return dbNetwork, nil // dbNetwork foi atualizado in-place.
 }
 
 // ToggleStatus alterna o status (ativo/inativo) de uma rede.
@@ -232,7 +231,7 @@ func (r *gormNetworkRepository) ToggleStatus(networkID uint64, updatedByUsername
 	updates := map[string]interface{}{
 		"status":     newStatus,
 		"updated_by": &updatedByUsername,
-		// "updated_at": time.Now().UTC(), // GORM autoUpdateTime
+		// `updated_at` é gerenciado por `autoUpdateTime` do GORM.
 	}
 
 	result := r.db.Model(&dbNetwork).Updates(updates)
@@ -241,40 +240,42 @@ func (r *gormNetworkRepository) ToggleStatus(networkID uint64, updatedByUsername
 		return nil, appErrors.WrapErrorf(result.Error, "falha na alteração de status da rede (GORM)")
 	}
 
-	statusStr := "Ativo"
+	statusStr := "Ativa"
 	if !newStatus {
-		statusStr = "Inativo"
+		statusStr = "Inativa"
 	}
 	appLogger.Infof("Status da rede ID %d ('%s') alterado para %s por %s.", networkID, dbNetwork.Name, statusStr, updatedByUsername)
-	return dbNetwork, nil
+	return dbNetwork, nil // dbNetwork foi atualizado in-place.
 }
 
 // BulkDelete exclui redes em massa pelo ID (Exclusão FÍSICA).
 // Retorna o número de redes efetivamente excluídas.
 func (r *gormNetworkRepository) BulkDelete(ids []uint64) (int64, error) {
 	if len(ids) == 0 {
-		return 0, nil
+		return 0, nil // Nenhuma ação se a lista de IDs estiver vazia.
 	}
 
-	// GORM usa Delete com uma slice de chaves primárias para exclusão em massa.
-	// Ou db.Where("id IN ?", ids).Delete(&models.DBNetwork{})
+	// GORM `Delete` com uma slice de chaves primárias realiza exclusão em massa.
+	// Ou `db.Where("id IN ?", ids).Delete(&models.DBNetwork{})`
 	result := r.db.Delete(&models.DBNetwork{}, ids)
 
 	if result.Error != nil {
 		appLogger.Errorf("Erro na exclusão em massa de redes (IDs: %v): %v", ids, result.Error)
-		// Verificar erro de FK (ex: redes com CNPJs associados)
+		// Verificar erro de FK (ex: redes com CNPJs associados que restringem a deleção).
 		if strings.Contains(strings.ToLower(result.Error.Error()), "foreign key constraint") ||
 			strings.Contains(strings.ToLower(result.Error.Error()), "violates foreign key constraint") {
-			return 0, fmt.Errorf("%w: não é possível excluir redes que possuem dados relacionados (ex: CNPJs)", appErrors.ErrConflict)
+			// Tentar identificar quais redes causaram o conflito pode ser complexo aqui.
+			// O serviço pode precisar iterar e deletar individualmente para melhor feedback.
+			return 0, fmt.Errorf("%w: não é possível excluir uma ou mais redes pois possuem dados relacionados (ex: CNPJs vinculados). Verifique as dependências.", appErrors.ErrConflict)
 		}
 		return 0, appErrors.WrapErrorf(result.Error, "falha na exclusão em massa de redes (GORM)")
 	}
 
 	deletedCount := result.RowsAffected
 	if deletedCount > 0 {
-		appLogger.Infof("%d redes excluídas fisicamente (IDs: %v).", deletedCount, ids)
+		appLogger.Infof("%d redes excluídas fisicamente (IDs tentados: %v).", deletedCount, ids)
 	} else {
-		appLogger.Warnf("Nenhuma rede encontrada para exclusão em massa com IDs: %v.", ids)
+		appLogger.Warnf("Nenhuma rede encontrada para exclusão em massa com os IDs fornecidos: %v (podem já ter sido excluídas).", ids)
 	}
 	return deletedCount, nil
 }

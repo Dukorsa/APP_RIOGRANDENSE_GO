@@ -1,40 +1,50 @@
 package models
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	// "gorm.io/gorm" // Se usando GORM
+	// "gorm.io/gorm" // Descomentado se GORM for usado diretamente aqui
+
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils" // Para validadores se usados no modelo
 )
 
 // DBUser representa a entidade User no banco de dados.
 type DBUser struct {
-	ID uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()"` // Usando UUID como no Python
+	// ID é a chave primária, usando UUID v4 por padrão.
+	ID uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()"`
 
-	Username     string  `gorm:"type:varchar(50);uniqueIndex;not null"`
-	Email        string  `gorm:"type:varchar(255);uniqueIndex;not null"`
-	FullName     *string `gorm:"type:varchar(100)"` // Ponteiro para string opcional
-	PasswordHash string  `gorm:"type:varchar(255);not null"`
-	Active       bool    `gorm:"not null;default:true"`
-	IsSuperuser  bool    `gorm:"not null;default:false"` // No seu Python era is_superuser
+	// Username é único e armazenado em minúsculas.
+	Username string `gorm:"type:varchar(50);uniqueIndex;not null"`
 
-	FailedAttempts  int        `gorm:"not null;default:0"`
-	LastFailedLogin *time.Time `gorm:"type:timestamptz"` // timestamptz para PostgreSQL, datetime para SQLite
-	LastLogin       *time.Time `gorm:"type:timestamptz"`
+	// Email é único e armazenado em minúsculas.
+	Email string `gorm:"type:varchar(255);uniqueIndex;not null"`
 
-	PasswordResetToken   *string    `gorm:"type:varchar(255);index"`
-	PasswordResetExpires *time.Time `gorm:"type:timestamptz"`
+	FullName     *string `gorm:"type:varchar(100)"`          // Nome completo do usuário (opcional).
+	PasswordHash string  `gorm:"type:varchar(255);not null"` // Hash da senha do usuário.
+	Active       bool    `gorm:"not null;default:true"`      // Status do usuário (ativo/inativo).
+	IsSuperuser  bool    `gorm:"not null;default:false"`     // Indica se o usuário é um superusuário (raro).
 
-	CreatedAt time.Time `gorm:"not null;default:now()"`
-	UpdatedAt time.Time `gorm:"not null;default:now()"` // GORM atualiza com autoUpdateTime
+	// Campos para controle de login e bloqueio de conta.
+	FailedAttempts  int        `gorm:"not null;default:0"` // Número de tentativas de login falhas consecutivas.
+	LastFailedLogin *time.Time `gorm:"type:timestamptz"`   // Timestamp da última tentativa de login falha.
+	LastLogin       *time.Time `gorm:"type:timestamptz"`   // Timestamp do último login bem-sucedido.
+
+	// Campos para o processo de redefinição de senha.
+	PasswordResetToken   *string    `gorm:"type:varchar(255);index"` // Token (hash) para redefinição de senha.
+	PasswordResetExpires *time.Time `gorm:"type:timestamptz"`        // Timestamp de expiração do token de reset.
+
+	// Campos de auditoria padrão do GORM.
+	CreatedAt time.Time `gorm:"not null;autoCreateTime"` // GORM preenche na criação.
+	UpdatedAt time.Time `gorm:"not null;autoUpdateTime"` // GORM preenche na criação e atualização.
 
 	// Relação Muitos-para-Muitos com Roles.
-	// Se não usar GORM, este campo será preenchido programaticamente pelo repositório.
-	Roles []*DBRole `gorm:"many2many:user_roles;"` // Tag GORM para relação
-	// Se não usar GORM, pode ser `gorm:"-"`
-	// e Roles seria `[]string` (nomes) ou `[]*DBRole`
-	// preenchido pelo repositório.
+	// `gorm:"many2many:user_roles;"` instrui o GORM a usar a tabela de junção `user_roles`.
+	// Os DBRoles associados são pré-carregados pelo repositório quando necessário.
+	Roles []*DBRole `gorm:"many2many:user_roles;"`
 }
 
 // TableName especifica o nome da tabela para GORM.
@@ -42,174 +52,182 @@ func (DBUser) TableName() string {
 	return "users"
 }
 
-// --- Structs para Transferência de Dados e Validação ---
-
-// UserBase contém campos comuns para criação e leitura.
-type UserBase struct {
-	Username string  `json:"username"`
-	Email    string  `json:"email"`
-	FullName *string `json:"full_name,omitempty"`
-}
+// --- Structs para Transferência de Dados (DTOs) e Validação ---
 
 // UserCreate é usado para criar um novo usuário.
+// As tags `validate` são para uso com bibliotecas de validação como `go-playground/validator`.
 type UserCreate struct {
-	Username string  `json:"username" validate:"required,min=3,max=50,username_custom_regex"` // username_custom_regex para ^[a-zA-Z0-9_-]+$
-	Email    string  `json:"email" validate:"required,email"`
+	// `validate:"required,min=3,max=50,username_format"` sugere validação customizada.
+	Username string `json:"username" validate:"required,min=3,max=50,username_format"`
+
+	// `validate:"required,email"` usa a validação de e-mail padrão da biblioteca.
+	Email string `json:"email" validate:"required,email"`
+
 	FullName *string `json:"full_name,omitempty" validate:"omitempty,max=100"`
-	Password string  `json:"password" validate:"required,min=12,password_strength"` // password_strength validador custom
-	// RoleNames: Lista de NOMES de roles a serem atribuídos inicialmente.
-	// O valor padrão ["user"] é uma boa prática.
+
+	// `validate:"required,min=12,password_strength"` sugere validação customizada para força da senha.
+	// O comprimento mínimo (ex: 12) deve vir da configuração da aplicação.
+	Password string `json:"password" validate:"required,password_strength"`
+
+	// RoleNames é uma lista de NOMES de roles a serem atribuídos inicialmente.
+	// O serviço validará se esses roles existem e os converterá para DBRoles.
+	// `validate:"omitempty,dive,min=1"`: opcional, mas se presente, cada nome de role deve ter min 1 caractere.
 	RoleNames []string `json:"role_names" validate:"omitempty,dive,min=1"`
 }
 
+var (
+	// Regex para Username: letras (Unicode), números, underscore, hífen.
+	usernameValidationRegex = regexp.MustCompile(`^[\p{L}\d_-]{3,50}$`)
+	// Regex para Email (simplificada, a validação principal é com net/mail).
+	// emailValidationRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+)
+
 // CleanAndValidate normaliza e valida os campos de UserCreate.
-// O serviço chamaria este método. Username e Email são convertidos para minúsculas.
+// O serviço deve chamar este método. Username e Email são convertidos para minúsculas.
 func (uc *UserCreate) CleanAndValidate() error {
-	// Username
+	// Normalizar e validar Username
 	cleanedUsername := strings.TrimSpace(uc.Username)
 	if cleanedUsername == "" {
-		return NewValidationError("Nome de usuário é obrigatório.", map[string]string{"username": "Nome de usuário obrigatório"})
+		return appErrors.NewValidationError("Nome de usuário é obrigatório.", map[string]string{"username": "obrigatório"})
 	}
-	// TODO: Chamar validador para formato do username (do utils/validators.go)
-	// if !validators.IsValidUsernameFormat(cleanedUsername) {
-	// 	return NewValidationError("Formato do nome de usuário inválido (letras, números, _, -).", map[string]string{"username": "Formato inválido"})
-	// }
+	if !usernameValidationRegex.MatchString(cleanedUsername) {
+		return appErrors.NewValidationError(
+			"Nome de usuário deve ter entre 3 e 50 caracteres e conter apenas letras, números, '_' ou '-'.",
+			map[string]string{"username": "formato inválido"},
+		)
+	}
 	uc.Username = strings.ToLower(cleanedUsername)
 
-	// Email
+	// Normalizar e validar Email
 	cleanedEmail := strings.TrimSpace(uc.Email)
 	if cleanedEmail == "" {
-		return NewValidationError("E-mail é obrigatório.", map[string]string{"email": "E-mail obrigatório"})
+		return appErrors.NewValidationError("E-mail é obrigatório.", map[string]string{"email": "obrigatório"})
 	}
-	// TODO: Chamar validador de email (do utils/validators.go)
-	// if !validators.IsValidEmail(cleanedEmail) {
-	// 	return NewValidationError("Formato de e-mail inválido.", map[string]string{"email": "E-mail inválido"})
+	// A validação de formato de email mais robusta (ex: com net/mail) é feita no serviço
+	// ou por uma tag de validação mais específica.
+	// if !emailValidationRegex.MatchString(cleanedEmail) { // Exemplo de regex simples
+	// 	return appErrors.NewValidationError("Formato de e-mail inválido.", map[string]string{"email": "formato inválido"})
 	// }
 	uc.Email = strings.ToLower(cleanedEmail)
 
-	// FullName (opcional)
+	// Normalizar FullName (opcional)
 	if uc.FullName != nil {
 		*uc.FullName = strings.TrimSpace(*uc.FullName)
 		if len(*uc.FullName) > 100 {
-			return NewValidationError("Nome completo excede 100 caracteres.", map[string]string{"full_name": "Nome completo muito longo"})
+			return appErrors.NewValidationError("Nome completo excede 100 caracteres.", map[string]string{"full_name": "muito longo"})
 		}
-		if *uc.FullName == "" {
+		if *uc.FullName == "" { // Se ficou vazia após trim, torna nil.
 			uc.FullName = nil
 		}
 	}
 
-	// Password (validação de força e comprimento é feita pelo serviço/validador de senha)
-	if uc.Password == "" {
-		return NewValidationError("Senha é obrigatória.", map[string]string{"password": "Senha obrigatória"})
+	// Validar Password (a validação de força é feita no serviço usando utils.ValidatePasswordStrength)
+	if strings.TrimSpace(uc.Password) == "" {
+		return appErrors.NewValidationError("Senha é obrigatória.", map[string]string{"password": "obrigatória"})
 	}
-	// A validação de força real (min_length, charsets) seria feita usando um validador
-	// em utils/validators.go, possivelmente chamado pelo UserService.
+	// A validação de comprimento mínimo e complexidade é feita no serviço.
 
-	// RoleNames (validação de se os roles existem é feita pelo UserService)
-	if len(uc.RoleNames) == 0 { // Se vazio, define "user" como padrão
-		uc.RoleNames = []string{"user"}
-	}
+	// Normalizar RoleNames
 	validRoleNames := []string{}
-	for _, rName := range uc.RoleNames {
-		rTrimmed := strings.TrimSpace(rName)
-		if rTrimmed != "" {
-			validRoleNames = append(validRoleNames, strings.ToLower(rTrimmed))
+	if uc.RoleNames != nil {
+		for _, rName := range uc.RoleNames {
+			rTrimmedLower := strings.ToLower(strings.TrimSpace(rName))
+			if rTrimmedLower != "" {
+				validRoleNames = append(validRoleNames, rTrimmedLower)
+			}
 		}
 	}
+	// Se nenhum role for fornecido, o serviço pode atribuir um role padrão (ex: "user").
 	uc.RoleNames = validRoleNames
-	if len(uc.RoleNames) == 0 { // Se após limpeza ficou vazio, erro ou default novamente
-		return NewValidationError("Pelo menos um role deve ser atribuído.", map[string]string{"role_names": "Atribuição de role obrigatória"})
-	}
 
 	return nil
 }
 
 // UserUpdate é usado para atualizar um usuário existente.
+// Ponteiros indicam campos opcionais para atualização.
 type UserUpdate struct {
 	Email    *string `json:"email,omitempty" validate:"omitempty,email"`
 	FullName *string `json:"full_name,omitempty" validate:"omitempty,max=100"`
 	Active   *bool   `json:"active,omitempty"`
-	// RoleNames: Se fornecido, substitui TODOS os roles do usuário.
+
+	// RoleNames: Se fornecido (não nil), substitui TODOS os roles do usuário.
+	// Um slice vazio `[]string{}` removeria todos os roles (se permitido pela lógica de negócio).
 	RoleNames *[]string `json:"role_names,omitempty" validate:"omitempty,dive,min=1"`
-	// Outros campos que podem ser atualizados por um admin:
-	// IsSuperuser     *bool
-	// FailedAttempts  *int // Para resetar via admin
-	// PasswordHash *string // Admin resetando senha diretamente (requer hash)
-	// PasswordResetToken *string // Limpar token
-	// PasswordResetExpires *time.Time // Limpar token
+
+	// Outros campos que podem ser atualizados por um administrador:
+	// IsSuperuser     *bool      `json:"is_superuser,omitempty"`
+	// FailedAttempts  *int       `json:"failed_attempts,omitempty"` // Para resetar bloqueio
 }
 
-// CleanAndValidate para UserUpdate.
+// CleanAndValidate normaliza e valida os campos de UserUpdate que foram fornecidos.
 func (uu *UserUpdate) CleanAndValidate() error {
 	if uu.Email != nil {
 		cleanedEmail := strings.TrimSpace(*uu.Email)
 		if cleanedEmail == "" {
-			return NewValidationError("E-mail não pode ser vazio se fornecido para atualização.", map[string]string{"email": "E-mail não pode ser vazio"})
+			return appErrors.NewValidationError("E-mail não pode ser vazio se fornecido para atualização.", map[string]string{"email": "não pode ser vazio"})
 		}
-		// TODO: Chamar validador de email
-		// if !validators.IsValidEmail(cleanedEmail) {
-		// 	return NewValidationError("Formato de e-mail inválido.", map[string]string{"email": "E-mail inválido"})
-		// }
+		// Validação de formato de email no serviço ou tag.
 		*uu.Email = strings.ToLower(cleanedEmail)
 	}
+
 	if uu.FullName != nil {
 		*uu.FullName = strings.TrimSpace(*uu.FullName)
 		if len(*uu.FullName) > 100 {
-			return NewValidationError("Nome completo excede 100 caracteres.", map[string]string{"full_name": "Nome muito longo"})
+			return appErrors.NewValidationError("Nome completo excede 100 caracteres.", map[string]string{"full_name": "muito longo"})
 		}
 		if *uu.FullName == "" {
 			uu.FullName = nil
 		}
 	}
-	if uu.RoleNames != nil {
-		if len(*uu.RoleNames) == 0 {
-			return NewValidationError("A lista de roles não pode ser vazia se fornecida para atualização (para remover todos os roles, passe um array vazio se a lógica permitir, ou use um método específico).", map[string]string{"role_names": "Lista de roles não pode ser vazia"})
-		}
+
+	if uu.RoleNames != nil { // Se o ponteiro para o slice não for nil
 		validRoleNames := []string{}
-		for _, rName := range *uu.RoleNames {
-			rTrimmed := strings.TrimSpace(rName)
-			if rTrimmed != "" {
-				validRoleNames = append(validRoleNames, strings.ToLower(rTrimmed))
+		for _, rName := range *uu.RoleNames { // Desreferencia o slice
+			rTrimmedLower := strings.ToLower(strings.TrimSpace(rName))
+			if rTrimmedLower != "" {
+				validRoleNames = append(validRoleNames, rTrimmedLower)
 			}
 		}
-		*uu.RoleNames = validRoleNames
-		if len(*uu.RoleNames) == 0 {
-			return NewValidationError("Após limpeza, a lista de roles ficou vazia.", map[string]string{"role_names": "Nenhum role válido fornecido"})
+		if len(*uu.RoleNames) > 0 && len(validRoleNames) == 0 {
+			// Se foi fornecido um slice não vazio, mas todos os nomes eram inválidos/vazios.
+			return appErrors.NewValidationError("Nenhum nome de role válido fornecido para atualização.", map[string]string{"role_names": "nomes inválidos"})
 		}
+		*uu.RoleNames = validRoleNames
 	}
 	return nil
 }
 
-// UserPublic representa os dados públicos de um usuário para a UI ou API.
+// UserPublic representa os dados públicos de um usuário para a UI ou API (DTO).
 type UserPublic struct {
 	ID        uuid.UUID  `json:"id"`
 	Username  string     `json:"username"`
 	Email     string     `json:"email"`
 	FullName  *string    `json:"full_name,omitempty"`
 	Active    bool       `json:"active"`
-	Roles     []string   `json:"roles"` // Lista de NOMES de roles
+	Roles     []string   `json:"roles"` // Lista de NOMES de roles.
 	CreatedAt time.Time  `json:"created_at"`
-	LastLogin *time.Time `json:"last_login,omitempty"`
+	LastLogin *time.Time `json:"last_login,omitempty"` // Opcional, para exibir na UI.
 }
 
-// ToUserPublic converte um DBUser para UserPublic.
+// ToUserPublic converte um DBUser (modelo do banco) para UserPublic (DTO).
 // O campo `DBUser.Roles` já deve estar populado com os objetos DBRole
-// se você quiser extrair os nomes dos roles aqui.
+// se os nomes dos roles precisarem ser extraídos.
 func ToUserPublic(dbUser *DBUser) *UserPublic {
 	if dbUser == nil {
 		return nil
 	}
+
 	roleNames := make([]string, 0, len(dbUser.Roles))
 	for _, role := range dbUser.Roles {
 		if role != nil { // Checagem de segurança
-			roleNames = append(roleNames, role.Name)
+			roleNames = append(roleNames, role.Name) // Role.Name já deve estar em minúsculas.
 		}
 	}
 
 	return &UserPublic{
 		ID:        dbUser.ID,
-		Username:  dbUser.Username,
-		Email:     dbUser.Email,
+		Username:  dbUser.Username, // Já em minúsculas no DB.
+		Email:     dbUser.Email,    // Já em minúsculas no DB.
 		FullName:  dbUser.FullName,
 		Active:    dbUser.Active,
 		Roles:     roleNames,
@@ -228,23 +246,25 @@ func ToUserPublicList(dbUsers []*DBUser) []*UserPublic {
 }
 
 // UserInDB representa o usuário como armazenado no banco, incluindo campos sensíveis.
-// Usado internamente pelos serviços e repositórios.
-// No Python, era `UserInDB`.
+// Usado internamente pelos serviços e repositórios para operações que necessitam
+// de todos os campos, como PasswordHash.
+// É essencialmente o mesmo que DBUser, mas pode ser usado para diferenciar
+// semanticamente quando todos os campos são esperados/necessários.
+// Em Go, é comum usar diretamente DBUser para este propósito se a estrutura for a mesma.
 type UserInDB struct {
-	DBUser // Embutir DBUser para ter todos os seus campos
-	// PasswordHash já está em DBUser
-	// PasswordResetToken já está em DBUser
-	// Roles já está em DBUser (como []*DBRole)
+	DBUser // Embutir DBUser para ter todos os seus campos.
 }
 
-// ToUserInDB é mais uma questão de garantir que os Roles estejam carregados.
-// Normalmente, o repositório retornaria um *DBUser já com os roles.
-// Esta função é mais para clareza se você precisar converter.
+// ToUserInDB converte um DBUser para UserInDB.
+// Usado principalmente para clareza semântica se necessário.
+// O repositório já deve retornar DBUser com todos os campos necessários carregados.
 func ToUserInDB(dbUser *DBUser) *UserInDB {
 	if dbUser == nil {
 		return nil
 	}
-	// Assume que dbUser.Roles já está carregado pelo repositório
+	// Garante que dbUser.Roles (e outras associações, se houver) estejam carregados
+	// se UserInDB tiver expectativas sobre esses campos.
+	// O repositório que busca o DBUser é responsável por pré-carregar associações.
 	return &UserInDB{
 		DBUser: *dbUser,
 	}

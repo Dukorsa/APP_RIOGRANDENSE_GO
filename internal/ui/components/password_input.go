@@ -7,7 +7,6 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/io/event"
-	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -15,95 +14,110 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"golang.org/x/exp/shiny/materialdesign/icons" // Para ícones de visibilidade
 
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // Para Config (PasswordMinLength)
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme" // Para Cores
-
-	// Para Ícones (se usar SVGs)
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils" // Para SecurityValidator
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils"
 )
 
 const (
 	passwordStrengthBarHeight = 4 // dp
-	strengthAnimationDuration = 250 * time.Millisecond
+	strengthAnimationDuration = 200 * time.Millisecond
 )
 
-// PasswordInput é um widget customizado para entrada de senha com barra de força.
+// PasswordInput é um widget customizado para entrada de senha com
+// ícone de alternância de visibilidade e barra de força opcional.
 type PasswordInput struct {
 	cfg *core.Config // Para obter PasswordMinLength
 
-	Editor    widget.Editor
-	visible   bool
-	toggleBtn widget.Clickable
-	// TODO: Implementar ícones reais para o botão de toggle
-	// eyeIcon       *icons.IconResource
-	// eyeOffIcon    *icons.IconResource
+	Editor       widget.Editor
+	isVisible    bool             // Controla se a senha está visível ou mascarada
+	toggleButton widget.Clickable // Botão para alternar a visibilidade
+	eyeIcon      *widget.Icon     // Ícone para "senha visível"
+	eyeOffIcon   *widget.Icon     // Ícone para "senha mascarada"
 
-	// Para a barra de força
-	strengthScore    float32     // 0.0 (fraca) a 1.0 (forte)
-	strengthBarColor color.NRGBA // Cor atual da barra
-	targetBarColor   color.NRGBA // Cor alvo para animação
-	targetScore      float32     // Score alvo para animação de largura
-	animating        bool
-	animStartTime    time.Time
+	// Para a barra de força da senha
+	showStrengthBar  bool        // Controla se a barra de força é exibida
+	currentStrength  float32     // Pontuação de força atual (0.0 a 1.0) para largura da barra
+	targetStrength   float32     // Pontuação alvo para animação da largura
+	currentBarColor  color.NRGBA // Cor atual da barra de força
+	targetBarColor   color.NRGBA // Cor alvo para animação da cor
+	isAnimatingBar   bool        // True se a barra estiver animando cor/largura
+	barAnimStartTime time.Time   // Momento de início da animação da barra
 
-	// Sinal (usando um canal para notificar o componente pai)
-	// Em Gio, geralmente o estado é puxado pelo pai, ou callbacks são usados.
-	// Um canal pode ser usado para eventos como "ReturnPressed".
-	ReturnPressed chan bool         // true se return foi pressionado
-	TextChanged   func(text string) // Callback opcional para quando o texto muda
+	// Callbacks e Eventos
+	// OnChange é chamado sempre que o texto no editor muda.
+	OnChange func(text string)
+	// OnSubmit é chamado quando o usuário pressiona Enter/Return no editor.
+	OnSubmit func(text string)
 
-	// Foco
-	focused bool
+	isFocused bool // True se o editor de texto estiver em foco
+	hint      string
 }
 
 // NewPasswordInput cria uma nova instância de PasswordInput.
 func NewPasswordInput(th *material.Theme, cfg *core.Config) *PasswordInput {
 	if cfg == nil {
 		appLogger.Fatalf("Config não pode ser nil para NewPasswordInput")
-		// Ou retornar um erro, mas para UI component, Fatalf pode ser ok na inicialização
 	}
 	pi := &PasswordInput{
 		cfg: cfg,
 		Editor: widget.Editor{
 			SingleLine: true,
-			Mask:       '*',  // Começa mascarado
+			Mask:       '*',  // Começa mascarado por padrão
 			Submit:     true, // Para capturar Enter/Return
 		},
-		visible:          false,
-		strengthBarColor: theme.Colors.Border, // Cor inicial da barra (cinza)
-		ReturnPressed:    make(chan bool, 1),  // Canal bufferizado
+		isVisible:       false,
+		showStrengthBar: true,                // Mostrar barra de força por padrão
+		currentBarColor: theme.Colors.Border, // Cor inicial da barra (cinza)
 	}
 
-	// TODO: Carregar ícones
-	// pi.eyeIcon = icons.GetIcon(icons.IconTypeEye)
-	// pi.eyeOffIcon = icons.GetIcon(icons.IconTypeEyeOff)
+	// Carregar ícones de visibilidade
+	var err error
+	pi.eyeIcon, err = widget.NewIcon(icons.ActionVisibility)
+	if err != nil {
+		appLogger.Errorf("Falha ao carregar ícone 'visibility': %v", err)
+	}
+	pi.eyeOffIcon, err = widget.NewIcon(icons.ActionVisibilityOff)
+	if err != nil {
+		appLogger.Errorf("Falha ao carregar ícone 'visibility_off': %v", err)
+	}
 
 	return pi
 }
 
+// SetHint define o texto de dica para o campo de senha.
 func (pi *PasswordInput) SetHint(hint string) {
+	pi.hint = hint // Armazena para uso no material.Editor
 	pi.Editor.Hint = hint
 }
 
+// Text retorna o texto atual do editor.
 func (pi *PasswordInput) Text() string {
 	return pi.Editor.Text()
 }
 
+// SetText define o texto do editor e atualiza a barra de força.
 func (pi *PasswordInput) SetText(txt string) {
 	pi.Editor.SetText(txt)
-	pi.updateStrength(txt) // Atualiza a força quando o texto é definido programaticamente
-	if pi.TextChanged != nil {
-		pi.TextChanged(txt)
+	if pi.showStrengthBar {
+		pi.updateStrengthVisuals(txt, false) // Atualiza a força, sem iniciar animação imediatamente
+	}
+	if pi.OnChange != nil {
+		pi.OnChange(txt)
 	}
 }
 
+// Clear limpa o texto do editor e reseta a barra de força.
 func (pi *PasswordInput) Clear() {
 	pi.Editor.SetText("")
-	pi.updateStrength("")
-	if pi.TextChanged != nil {
-		pi.TextChanged("")
+	if pi.showStrengthBar {
+		pi.updateStrengthVisuals("", false)
+	}
+	if pi.OnChange != nil {
+		pi.OnChange("")
 	}
 }
 
@@ -112,35 +126,56 @@ func (pi *PasswordInput) Focus() {
 	pi.Editor.Focus()
 }
 
-func (pi *PasswordInput) updateStrength(text string) {
-	var score float32
-	var targetColor color.NRGBA
+// Focused retorna true se o editor estiver em foco.
+func (pi *PasswordInput) Focused() bool {
+	return pi.Editor.Focused()
+}
 
-	// minLen := pi.cfg.PasswordMinLength // Obter de cfg
-	minLen := 12 // Placeholder
-	if pi.cfg != nil {
-		minLen = pi.cfg.PasswordMinLength
+// ShowStrengthBar define se a barra de força da senha deve ser exibida.
+func (pi *PasswordInput) ShowStrengthBar(show bool) {
+	pi.showStrengthBar = show
+	if !show { // Se esconder, reseta a animação e força para zero visualmente
+		pi.isAnimatingBar = false
+		pi.currentStrength = 0
+	} else { // Se mostrar, recalcula a força baseada no texto atual
+		pi.updateStrengthVisuals(pi.Editor.Text(), false)
+	}
+}
+
+// updateStrengthVisuals calcula a força da senha e prepara a animação da barra.
+// `animate` define se a transição deve ser animada ou instantânea.
+func (pi *PasswordInput) updateStrengthVisuals(text string, animate bool) {
+	if !pi.showStrengthBar {
+		return
 	}
 
-	validation := utils.ValidatePasswordStrength(text, minLen) // utils.SecurityValidator
+	var score float32
+	var newTargetColor color.NRGBA
+	var minLenRequired = 12 // Default se cfg for nil (improvável após NewPasswordInput)
+	if pi.cfg != nil {
+		minLenRequired = pi.cfg.PasswordMinLength
+	}
+
+	validation := utils.ValidatePasswordStrength(text, minLenRequired)
 
 	if text == "" {
 		score = 0
-		targetColor = theme.Colors.Border // Cinza claro para barra vazia
+		newTargetColor = theme.Colors.Border // Cinza claro para barra vazia
 	} else if validation.IsValid {
-		// Mapear entropia para score (exemplo)
-		// Entropia em bits: < 40 (fraca), 40-70 (média), > 70 (forte)
-		if validation.Entropy < 40 {
+		// Mapeia pontuação de força baseada na entropia ou critérios.
+		// Exemplo simples:
+		if validation.Entropy < 40 { // Fraca, apesar de passar nos critérios básicos
 			score = 0.35
-			targetColor = theme.Colors.Danger
-		} else if validation.Entropy < 70 {
+			newTargetColor = theme.Colors.Danger
+		} else if validation.Entropy < 70 { // Média
 			score = 0.70
-			targetColor = theme.Colors.Warning
-		} else {
+			newTargetColor = theme.Colors.Warning
+		} else { // Forte
 			score = 1.0
-			targetColor = theme.Colors.Success
+			newTargetColor = theme.Colors.Success
 		}
-	} else { // Senha inválida, mas não vazia (ex: muito curta)
+	} else { // Senha inválida (ex: muito curta, não atende critérios)
+		// Barra vermelha, com progresso parcial se alguns critérios forem atendidos.
 		checksPassed := 0
 		if validation.Length {
 			checksPassed++
@@ -157,199 +192,198 @@ func (pi *PasswordInput) updateStrength(text string) {
 		if validation.SpecialChar {
 			checksPassed++
 		}
+		// Não considera NotCommonPassword para progresso visual aqui, apenas para IsValid.
 
-		score = float32(checksPassed) * 0.15 // Um pequeno progresso para cada critério atendido
-		if score > 0.30 {
+		score = float32(checksPassed) * 0.18    // Ajuste o fator para o progresso desejado
+		if score > 0.30 && !validation.Length { // Limita se o comprimento ainda for o problema principal
 			score = 0.30
-		} // Limita o score para senhas ainda inválidas
-		targetColor = theme.Colors.Danger
+		} else if score > 0.80 { // Limita o score máximo para senhas ainda inválidas
+			score = 0.80
+		}
+		newTargetColor = theme.Colors.Danger
 	}
 
-	if pi.strengthScore != score || pi.strengthBarColor != targetColor {
-		pi.targetScore = score
-		pi.targetBarColor = targetColor
-		pi.animating = true
-		// pi.animStartTime = // Será definido no Layout se animStartTime for zero
+	if pi.currentStrength != score || pi.currentBarColor != newTargetColor {
+		pi.targetStrength = score
+		pi.targetBarColor = newTargetColor
+		if animate && !pi.isAnimatingBar { // Só inicia nova animação se não estiver animando ou se for para ser instantâneo
+			pi.isAnimatingBar = true
+			pi.barAnimStartTime = time.Time{} // Será definido no Layout
+		} else if !animate { // Atualização instantânea
+			pi.currentStrength = score
+			pi.currentBarColor = newTargetColor
+			pi.isAnimatingBar = false
+		}
 	}
 }
 
+// Layout desenha o componente PasswordInput.
 func (pi *PasswordInput) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	// Processar eventos do editor
+	// Processar eventos do editor de texto.
 	for _, e := range pi.Editor.Events(gtx) {
 		switch ev := e.(type) {
 		case widget.ChangeEvent:
-			pi.updateStrength(pi.Editor.Text())
-			if pi.TextChanged != nil {
-				pi.TextChanged(pi.Editor.Text())
+			if pi.showStrengthBar {
+				pi.updateStrengthVisuals(pi.Editor.Text(), true) // Anima a barra ao digitar
 			}
-			op.InvalidateOp{}.Add(gtx.Ops) // Solicita redesenho para barra de força
+			if pi.OnChange != nil {
+				pi.OnChange(pi.Editor.Text())
+			}
+			op.InvalidateOp{}.Add(gtx.Ops) // Solicita redesenho para barra de força e feedback.
 		case widget.SubmitEvent:
-			// Enviar para o canal ReturnPressed
-			// Usar select com default para não bloquear se o canal não estiver sendo lido
-			select {
-			case pi.ReturnPressed <- true:
-			default:
+			if pi.OnSubmit != nil {
+				pi.OnSubmit(ev.Text)
 			}
 		}
 	}
 
-	// Eventos do botão de toggle
-	if pi.toggleBtn.Clicked(gtx) {
-		pi.visible = !pi.visible
-		if pi.visible {
-			pi.Editor.Mask = 0 // Sem máscara
+	// Processar clique no botão de alternar visibilidade.
+	if pi.toggleButton.Clicked(gtx) {
+		pi.isVisible = !pi.isVisible
+		if pi.isVisible {
+			pi.Editor.Mask = 0 // Sem máscara (senha visível)
 		} else {
-			pi.Editor.Mask = '*'
+			pi.Editor.Mask = '*' // Mascarar com asterisco
 		}
 	}
 
-	// Atualizar estado de foco
-	pi.focused = pi.Editor.Focused()
+	// Atualizar estado de foco.
+	pi.isFocused = pi.Editor.Focused()
 
-	// Layout principal (vertical: editor + barra de força)
+	// Layout principal (vertical: editor + barra de força opcional).
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Linha 1: Editor e botão de toggle
+		// Linha 1: Editor e botão de alternar visibilidade.
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					// Desenha borda customizada em volta do editor
+					// Desenha borda customizada em volta do editor.
 					border := widget.Border{
 						Color:        theme.Colors.Border,
-						CornerRadius: unit.Dp(5),
-						Width:        unit.Dp(1),
+						CornerRadius: theme.CornerRadius,
+						Width:        theme.BorderWidthDefault,
 					}
-					if pi.focused {
+					if pi.isFocused {
 						border.Color = theme.Colors.Primary
-						border.Width = unit.Dp(1.5) // Borda mais grossa no foco
+						border.Width = unit.Dp(1.5) // Borda mais grossa no foco.
 					}
 
-					// Padding interno do editor
-					// A altura do editor é controlada pelo tema e tamanho da fonte.
-					// Para garantir altura mínima, poderíamos usar layout.ConstrainedBox.
-					inputEditor := material.Editor(th, &pi.Editor, pi.Editor.Hint)
-					inputEditor.Font.Weight = font.Normal // Ou outro peso
-					inputEditor.TextSize = unit.Sp(14)    // Similar ao 10pt Python
+					// Editor de texto.
+					inputEditor := material.Editor(th, &pi.Editor, pi.hint) // Usa o hint armazenado
+					inputEditor.Font.Weight = font.Normal
+					inputEditor.TextSize = unit.Sp(14) // Tamanho de texto padrão.
 
 					return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						// Padding interno para o texto do editor.
+						// O ícone de toggle é desenhado sobreposto, então o padding direito do texto
+						// precisa acomodá-lo.
 						return layout.Inset{
-							Top:    unit.Dp(7),
-							Bottom: unit.Dp(7),
-							Left:   unit.Dp(10),
-							Right:  unit.Dp(10), // Espaço para o botão
+							Top: unit.Dp(8), Bottom: unit.Dp(8),
+							Left: unit.Dp(10), Right: unit.Dp(36), // Espaço à direita para o ícone.
 						}.Layout(gtx, inputEditor.Layout)
 					})
 				}),
+				// Ícone de alternar visibilidade (desenhado "dentro" da área do editor).
 				layout.Rigid(
-					layout.Inset{Left: unit.Dp(-30), Right: unit.Dp(5)}.Layout(gtx, // Ajuste Left negativo para sobrepor um pouco
+					// Inset negativo para mover o ícone para dentro da borda.
+					// O valor exato depende do tamanho do ícone e do padding.
+					layout.Inset{Left: unit.Dp(-32), Right: unit.Dp(4)}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
-							// TODO: Usar ícone SVG ou do material.Theme
-							// Por agora, um texto simples
-							toggleLabel := "👁️"
-							if pi.visible {
-								toggleLabel = "🙈"
+							iconToShow := pi.eyeOffIcon
+							if pi.isVisible {
+								iconToShow = pi.eyeIcon
 							}
-							// IconButton para melhor interação
-							btn := material.IconButton(th, &pi.toggleBtn, nil, "Toggle visibility")
-							btn.Background = color.NRGBA{} // Transparente
+							if iconToShow == nil { // Fallback se ícones não carregarem.
+								return layout.Dimensions{}
+							}
+							// Usar IconButton para área de clique maior e feedback visual.
+							btn := material.IconButton(th, &pi.toggleButton, iconToShow, "Alternar visibilidade da senha")
+							btn.Background = color.NRGBA{} // Botão transparente.
 							btn.Color = theme.Colors.TextMuted
-							btn.Inset = layout.UniformInset(unit.Dp(2))
-							// Se tiver ícones:
-							// if pi.visible { btn.Icon = pi.eyeIcon.Resource() } else { btn.Icon = pi.eyeOffIcon.Resource() }
-							// Ou material.Icon:
-							// if pi.visible { btn.Icon = PularParaIcone(icons.Visibility) } else { btn.Icon = PularParaIcone(icons.VisibilityOff) }
-
-							// Placeholder para o botão
-							return material.Body2(th, toggleLabel).Layout(gtx) // Usando texto como placeholder
+							btn.Inset = layout.UniformInset(unit.Dp(6)) // Padding do ícone dentro do botão.
+							return btn.Layout(gtx)
 						},
 					),
 				),
 			)
 		}),
-		// Linha 2: Barra de Força
+		// Linha 2: Barra de Força (se habilitada).
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			// Pequeno espaço acima da barra
-			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, pi.layoutStrengthBar)
+			if pi.showStrengthBar {
+				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, pi.layoutStrengthBar)
+			}
+			return layout.Dimensions{}
 		}),
 	)
 }
 
 // layoutStrengthBar desenha a barra de força da senha.
 func (pi *PasswordInput) layoutStrengthBar(gtx layout.Context) layout.Dimensions {
-	if pi.animating {
-		if pi.animStartTime.IsZero() { // Inicia animação
-			pi.animStartTime = gtx.Now
+	if pi.isAnimatingBar {
+		if pi.barAnimStartTime.IsZero() { // Inicia animação se ainda não começou.
+			pi.barAnimStartTime = gtx.Now
 		}
-		dt := gtx.Now.Sub(pi.animStartTime)
+		dt := gtx.Now.Sub(pi.barAnimStartTime)
 		progress := float32(dt) / float32(strengthAnimationDuration)
 
 		if progress >= 1.0 {
 			progress = 1.0
-			pi.animating = false
-			pi.animStartTime = time.Time{} // Reseta para a próxima animação
-			pi.strengthScore = pi.targetScore
-			pi.strengthBarColor = pi.targetBarColor
+			pi.isAnimatingBar = false
+			pi.barAnimStartTime = time.Time{} // Reseta para a próxima animação.
+			pi.currentStrength = pi.targetStrength
+			pi.currentBarColor = pi.targetBarColor
 		} else {
-			// Interpolação linear simples para cor e score
-			pi.strengthScore = pi.targetScore*progress + pi.strengthScore*(1-progress) // Poderia ser mais suave com easing
+			// Interpolação linear simples para suavizar a transição da largura da barra.
+			pi.currentStrength = pi.targetStrength*progress + pi.currentStrength*(1-progress)
 
-			// Interpolar cor (R, G, B, A)
-			r1, g1, b1, a1 := pi.strengthBarColor.RGBA()
+			// Interpolação linear para a cor da barra.
+			r1, g1, b1, a1 := pi.currentBarColor.RGBA()
 			r2, g2, b2, a2 := pi.targetBarColor.RGBA()
-
-			r := float32(r1>>8)*(1-progress) + float32(r2>>8)*progress
-			g := float32(g1>>8)*(1-progress) + float32(g2>>8)*progress
-			b := float32(b1>>8)*(1-progress) + float32(b2>>8)*progress
-			a := float32(a1>>8)*(1-progress) + float32(a2>>8)*progress
-			pi.strengthBarColor = color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: uint8(a)}
+			r := uint8(float32(r1>>8)*(1-progress) + float32(r2>>8)*progress)
+			g := uint8(float32(g1>>8)*(1-progress) + float32(g2>>8)*progress)
+			b := uint8(float32(b1>>8)*(1-progress) + float32(b2>>8)*progress)
+			a := uint8(float32(a1>>8)*(1-progress) + float32(a2>>8)*progress)
+			pi.currentBarColor = color.NRGBA{R: r, G: g, B: b, A: a}
 		}
-		op.InvalidateOp{}.Add(gtx.Ops) // Continua animando
+		op.InvalidateOp{}.Add(gtx.Ops) // Continua animando.
 	}
 
-	barHeight := gtx.Dp(passwordStrengthBarHeight)
-	barWidth := gtx.Constraints.Max.X // Largura total do componente pai
+	barHeightPx := gtx.Dp(passwordStrengthBarHeight)
+	totalBarWidthPx := gtx.Constraints.Max.X // Largura total do componente pai (editor).
 
-	// Desenha o fundo da barra
-	bgRect := clip.Rect{Max: image.Pt(barWidth, barHeight)}.Op()
-	paint.FillShape(gtx.Ops, theme.Colors.Grey100, bgRect) // Cinza claro para fundo
+	// Desenha o fundo da barra (trilha cinza).
+	backgroundRect := clip.Rect{Max: image.Pt(totalBarWidthPx, barHeightPx)}
+	// Cantos arredondados para o fundo da barra.
+	// clip.RRect{Rect: backgroundRect.Rect, SE: barHeightPx / 2, SW: barHeightPx / 2, NW: barHeightPx / 2, NE: barHeightPx / 2}.Add(gtx.Ops)
+	// paint.Fill(gtx.Ops, theme.Colors.Grey100)
+	// Ou mais simples, um retângulo:
+	paint.FillShape(gtx.Ops, theme.Colors.Grey200, backgroundRect.Op())
 
-	// Desenha a barra de progresso da força
-	if pi.strengthScore > 0 {
-		progressWidth := int(float32(barWidth) * pi.strengthScore)
-		if progressWidth > 0 {
-			fgRect := clip.RRect{
-				Rect: image.Rect(0, 0, progressWidth, barHeight),
-				SE:   gtx.Dp(2), SW: gtx.Dp(2), NW: gtx.Dp(2), NE: gtx.Dp(2), // Cantos arredondados
-			}.Op(gtx.Ops)
-			paint.FillShape(gtx.Ops, pi.strengthBarColor, fgRect)
+	// Desenha a barra de progresso da força.
+	if pi.currentStrength > 0 {
+		progressWidthPx := int(float32(totalBarWidthPx) * pi.currentStrength)
+		if progressWidthPx > 0 {
+			// Garante que a barra de progresso não exceda a largura total.
+			if progressWidthPx > totalBarWidthPx {
+				progressWidthPx = totalBarWidthPx
+			}
+
+			strengthRect := image.Rect(0, 0, progressWidthPx, barHeightPx)
+			// Cantos arredondados para a barra de progresso.
+			// Se a barra for muito curta, os raios dos cantos podem ser problemáticos.
+			cornerRadiusPx := float32(barHeightPx) / 2.0
+			clip.RRect{
+				Rect: strengthRect,
+				NW:   cornerRadiusPx, NE: cornerRadiusPx,
+				SW: cornerRadiusPx, SE: cornerRadiusPx,
+			}.Add(gtx.Ops)
+			paint.Fill(gtx.Ops, pi.currentBarColor)
 		}
 	}
-	return layout.Dimensions{Size: image.Pt(barWidth, barHeight)}
-}
-
-// SetMaxLength define o comprimento máximo do texto.
-func (pi *PasswordInput) SetMaxLength(length int) {
-	// O widget.Editor do Gio não tem um MaxLength direto.
-	// Isso precisaria ser tratado na lógica de entrada ou validação.
-	appLogger.Warn("SetMaxLength não é diretamente suportado pelo widget.Editor do Gio; use validação.")
-}
-
-// SetReadOnly define se o campo é somente leitura.
-func (pi *PasswordInput) SetReadOnly(readOnly bool) {
-	// O widget.Editor não tem um modo ReadOnly direto.
-	// Você pode desabilitar eventos de teclado ou mudar a aparência.
-	// Para uma solução simples, podemos apenas impedir a edição.
-	// pi.Editor.ReadOnly = readOnly // Se existisse algo assim
-	if readOnly {
-		pi.Editor.FocusPolicy = 0 // Impede foco
-	} else {
-		pi.Editor.FocusPolicy = widget.FocusPolicy(key.FocusFilter{})
-	}
-	// Aparência também precisaria mudar
-	appLogger.Warn("SetReadOnly tem implementação limitada para PasswordInput em Gio.")
+	return layout.Dimensions{Size: image.Pt(totalBarWidthPx, barHeightPx)}
 }
 
 // AddInputListener permite que o componente pai ouça eventos do Editor.
-// (Já temos o callback TextChanged e o canal ReturnPressed)
+// Isso é útil para integração com sistemas de formulário mais complexos.
 func (pi *PasswordInput) AddInputListener(gtx layout.Context, queue event.Queue) {
 	pi.Editor.Add(gtx.Ops, queue)
 }

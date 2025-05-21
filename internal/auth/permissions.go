@@ -8,18 +8,14 @@ import (
 
 	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/repositories"
-	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services" // Pode não ser necessário aqui diretamente
+	"github.comcom/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 )
 
 // Permission representa uma permissão no sistema.
-// No Python, era um dataclass. Em Go, será uma string ou um tipo customizado.
-// Para simplicidade inicial, usaremos strings, mas um tipo enum-like seria mais robusto.
 type Permission string
 
 // Definição de todas as permissões possíveis no sistema.
-// Estas são as "definições" de permissão. A associação a roles virá do banco de dados.
 const (
 	// Network Permissions
 	PermNetworkView    Permission = "network:view"
@@ -27,19 +23,19 @@ const (
 	PermNetworkUpdate  Permission = "network:update"
 	PermNetworkDelete  Permission = "network:delete"
 	PermNetworkStatus  Permission = "network:status"
-	PermNetworkViewOwn Permission = "network:view_own" // Exemplo resource-based
+	PermNetworkViewOwn Permission = "network:view_own"
 
 	// CNPJ Permissions
 	PermCNPJView   Permission = "cnpj:view"
 	PermCNPJCreate Permission = "cnpj:create"
+	PermCNPJUpdate Permission = "cnpj:update"
 	PermCNPJDelete Permission = "cnpj:delete"
-	// PermCNPJUpdate Permission = "cnpj:update" // Faltava no Python? Adicionei no seu .txt app_riograndense_completo_estrutura_codigo.txt
 
 	// User Management Permissions
 	PermUserCreate        Permission = "user:create"
 	PermUserRead          Permission = "user:read"
 	PermUserUpdate        Permission = "user:update"
-	PermUserDelete        Permission = "user:delete" // No Python era desativar
+	PermUserDelete        Permission = "user:delete"
 	PermUserResetPassword Permission = "user:reset_password"
 	PermUserUnlock        Permission = "user:unlock"
 	PermUserManageRoles   Permission = "user:manage_roles"
@@ -56,10 +52,9 @@ const (
 	// Import Permissions
 	PermImportExecute    Permission = "import:execute"
 	PermImportViewStatus Permission = "import:view_status"
-
-	// Adicione outras permissões aqui
 )
 
+// allDefinedPermissions mantém um mapa de todas as permissões definidas e suas descrições.
 var allDefinedPermissions = map[Permission]string{
 	PermNetworkView:    "Visualizar dados de redes",
 	PermNetworkCreate:  "Criar novas redes",
@@ -70,8 +65,8 @@ var allDefinedPermissions = map[Permission]string{
 
 	PermCNPJView:   "Visualizar CNPJs cadastrados",
 	PermCNPJCreate: "Cadastrar novos CNPJs",
+	PermCNPJUpdate: "Atualizar CNPJs existentes",
 	PermCNPJDelete: "Excluir CNPJs",
-	// PermCNPJUpdate: "Atualizar CNPJs",
 
 	PermUserCreate:        "Criar novos usuários no sistema",
 	PermUserRead:          "Visualizar lista e detalhes de usuários",
@@ -80,7 +75,8 @@ var allDefinedPermissions = map[Permission]string{
 	PermUserResetPassword: "Redefinir a senha de outros usuários",
 	PermUserUnlock:        "Desbloquear contas de usuários bloqueadas",
 	PermUserManageRoles:   "Gerenciar roles e atribuir roles a usuários",
-	PermRoleManage:        "Criar/Editar/Excluir roles e suas permissões",
+
+	PermRoleManage: "Criar/Editar/Excluir roles e suas permissões",
 
 	PermExportData: "Exportar dados da aplicação",
 	PermLogView:    "Visualizar logs de auditoria do sistema",
@@ -90,28 +86,22 @@ var allDefinedPermissions = map[Permission]string{
 }
 
 // PermissionManager gerencia as permissões e suas associações com roles.
-// Em Go, isso envolverá interagir com o RoleRepository para obter as permissões de um role.
 type PermissionManager struct {
-	roleRepo repositories.RoleRepository // Interface
-	// sessionManager *SessionManager // Pode ser útil para obter sessão atual
-	// lock           sync.RWMutex    // Se houver cache interno de permissões de roles
+	roleRepo repositories.RoleRepository
 }
 
 // NewPermissionManager cria uma nova instância do PermissionManager.
-func NewPermissionManager(roleRepo repositories.RoleRepository /*, sm *SessionManager*/) *PermissionManager {
+func NewPermissionManager(roleRepo repositories.RoleRepository) *PermissionManager {
 	if roleRepo == nil {
-		// Isso seria um erro de programação, então podemos usar panic ou log fatal.
 		appLogger.Fatalf("RoleRepository não pode ser nil para PermissionManager")
 	}
 	return &PermissionManager{
 		roleRepo: roleRepo,
-		// sessionManager: sm,
 	}
 }
 
 // GetAllDefinedPermissions retorna um mapa de todas as permissões definidas no código.
 func (pm *PermissionManager) GetAllDefinedPermissions() map[Permission]string {
-	// Retorna uma cópia para evitar modificação externa se desejado, mas para strings é ok.
 	return allDefinedPermissions
 }
 
@@ -122,67 +112,51 @@ func (pm *PermissionManager) IsPermissionDefined(permName Permission) bool {
 }
 
 // HasPermission verifica se um usuário (representado por sua sessão) possui uma permissão específica.
-// O parâmetro `resourceOwnerID` é opcional e usado para verificações baseadas em recursos (ex: "network:view_own").
+// O parâmetro `resourceOwnerID` é opcional e usado para verificações baseadas em recursos.
 func (pm *PermissionManager) HasPermission(userSession *SessionData, requiredPermission Permission, resourceOwnerID *string) (bool, error) {
 	if userSession == nil {
 		appLogger.Warn("Verificação de permissão falhou: sessão de usuário ausente.")
 		return false, fmt.Errorf("%w: usuário não autenticado", appErrors.ErrUnauthorized)
 	}
 
-	// 1. Validar se a permissão requerida é conhecida pelo sistema
 	if !pm.IsPermissionDefined(requiredPermission) {
 		appLogger.Errorf("Permissão desconhecida '%s' solicitada por usuário '%s'.", requiredPermission, userSession.Username)
 		return false, fmt.Errorf("%w: permissão '%s' não definida no sistema", appErrors.ErrPermissionConfig, requiredPermission)
 	}
 
-	// 2. Bypass para Administrador (role 'admin')
-	// A SessionData deve conter os nomes dos roles do usuário.
 	for _, roleName := range userSession.Roles {
 		if strings.ToLower(roleName) == "admin" {
 			appLogger.Debugf("Permissão '%s' concedida (Admin bypass) para '%s'.", requiredPermission, userSession.Username)
-			// TODO: Implementar lógica resource-based para admin se necessário
-			// if requiredPermission == PermNetworkViewOwn && resourceOwnerID != nil {
-			// 	return *resourceOwnerID == userSession.Username, nil // Exemplo simplificado
-			// }
 			return true, nil
 		}
 	}
 
-	// 3. Verificar permissões baseadas em roles do usuário
-	// Itera sobre os roles do usuário na sessão e verifica se algum deles concede a permissão.
 	for _, roleName := range userSession.Roles {
-		role, err := pm.roleRepo.GetByName(roleName) // Obtém o DBRole e suas permissões
+		role, err := pm.roleRepo.GetByName(roleName)
 		if err != nil {
 			if errors.Is(err, appErrors.ErrNotFound) {
 				appLogger.Warnf("Role '%s' da sessão do usuário '%s' não encontrado no banco. Pulando.", roleName, userSession.Username)
-				continue // Role da sessão pode estar desatualizado/removido
+				continue
 			}
 			appLogger.Errorf("Erro ao buscar role '%s' para usuário '%s': %v", roleName, userSession.Username, err)
 			return false, fmt.Errorf("%w: erro ao verificar permissões do role '%s'", appErrors.ErrDatabase, roleName)
 		}
 
-		// `role.Permissions` deve ser um slice/map de strings de nomes de permissão
-		for _, permNameFromDB := range role.Permissions { // Supondo que role.Permissions é []string
+		for _, permNameFromDB := range role.Permissions {
 			if Permission(permNameFromDB) == requiredPermission {
-				// TODO: Implementar lógica resource-based
-				// Exemplo para 'network:view_own'
 				if requiredPermission == PermNetworkViewOwn {
 					if resourceOwnerID == nil {
 						appLogger.Warnf("Permissão '%s' requer resourceOwnerID, mas não foi fornecido para usuário '%s'. Negando.", requiredPermission, userSession.Username)
-						return false, nil // Ou um erro específico
+						return false, nil
 					}
-					// Aqui você compararia o userSession.Username (ou UserID) com o resourceOwnerID
-					// Se o userSession.Username é o dono, permite.
-					// Esta é uma simplificação. Em Python, havia uma check_fn.
-					// Em Go, você pode ter uma função helper ou lógica inline.
-					isOwner := (userSession.Username == *resourceOwnerID) // Ou comparar IDs de usuário
+					// Exemplo simplificado de verificação de propriedade.
+					// Uma implementação real pode comparar userSession.UserID com o ID do proprietário do recurso.
+					isOwner := (userSession.Username == *resourceOwnerID) // Ou userSession.UserID.String() == *resourceOwnerID
 					if isOwner {
 						appLogger.Debugf("Permissão '%s' concedida para '%s' (owner).", requiredPermission, userSession.Username)
 						return true, nil
 					}
-					// Se não for o dono, essa permissão específica não concede acesso.
-					// O loop continua para verificar outras permissões/roles.
-					continue // Não retorna false aqui, pois outro role/permissão pode conceder
+					continue // Não é o proprietário, continua verificando outros roles/permissões.
 				}
 				appLogger.Debugf("Permissão '%s' concedida para '%s' via role '%s'.", requiredPermission, userSession.Username, roleName)
 				return true, nil
@@ -191,7 +165,7 @@ func (pm *PermissionManager) HasPermission(userSession *SessionData, requiredPer
 	}
 
 	appLogger.Debugf("Permissão '%s' NEGADA para usuário '%s'.", requiredPermission, userSession.Username)
-	return false, nil // Permissão não encontrada em nenhum role
+	return false, nil
 }
 
 // HasRole verifica se um usuário (representado por sua sessão) possui um role específico.
@@ -212,16 +186,11 @@ func (pm *PermissionManager) HasRole(userSession *SessionData, requiredRoleName 
 	return false, nil
 }
 
-// --- Funções Helper para Verificação (Substitutos para Decoradores) ---
-
 // CheckPermission é uma função helper para verificar permissão e retornar um erro apropriado.
-// Uso: err := permManager.CheckPermission(session, PermNetworkCreate, nil)
-//
-//	if err != nil { return err // ou tratar o erro }
 func (pm *PermissionManager) CheckPermission(userSession *SessionData, requiredPermission Permission, resourceOwnerID *string) error {
 	hasPerm, err := pm.HasPermission(userSession, requiredPermission, resourceOwnerID)
 	if err != nil {
-		return err // Erro interno ou de configuração
+		return err
 	}
 	if !hasPerm {
 		return fmt.Errorf("%w: permissão '%s' necessária", appErrors.ErrPermissionDenied, requiredPermission)
@@ -233,7 +202,7 @@ func (pm *PermissionManager) CheckPermission(userSession *SessionData, requiredP
 func (pm *PermissionManager) CheckRole(userSession *SessionData, requiredRoleName string) error {
 	hasRole, err := pm.HasRole(userSession, requiredRoleName)
 	if err != nil {
-		return err // Erro interno (improvável para HasRole simples)
+		return err
 	}
 	if !hasRole {
 		return fmt.Errorf("%w: role '%s' necessário", appErrors.ErrPermissionDenied, requiredRoleName)
@@ -241,8 +210,6 @@ func (pm *PermissionManager) CheckRole(userSession *SessionData, requiredRoleNam
 	return nil
 }
 
-// Global instance (Singleton-like pattern in Go is often just a package-level variable)
-// Esta instância precisa ser inicializada em main.go ou onde os serviços são configurados.
 var globalPermissionManager *PermissionManager
 var pmOnce sync.Once
 
@@ -262,38 +229,29 @@ func InitGlobalPermissionManager(roleRepo repositories.RoleRepository) {
 // Panics se não for inicializado.
 func GetPermissionManager() *PermissionManager {
 	if globalPermissionManager == nil {
-		// Isso indica um erro de programação - InitGlobalPermissionManager não foi chamado.
 		appLogger.Fatalf("FATAL: PermissionManager global não foi inicializado. Chame InitGlobalPermissionManager primeiro.")
 	}
 	return globalPermissionManager
 }
 
-// --- Exemplo de seeding de roles e permissões (chamado em main.go ou em um script de setup) ---
-// Esta função é uma tradução conceitual do _seed_initial_roles_and_permissions do Python.
+// SeedInitialRolesAndPermissions verifica e cria/atualiza roles e permissões padrão.
 func SeedInitialRolesAndPermissions(roleRepo repositories.RoleRepository, permManager *PermissionManager) error {
 	appLogger.Info("Verificando/Criando roles e permissões iniciais...")
 
 	allDefinedPermsMap := permManager.GetAllDefinedPermissions()
-	allDefinedPermNames := make([]Permission, 0, len(allDefinedPermsMap))
+	allDefinedPermNamesStr := make([]string, 0, len(allDefinedPermsMap))
 	for pName := range allDefinedPermsMap {
-		allDefinedPermNames = append(allDefinedPermNames, pName)
+		allDefinedPermNamesStr = append(allDefinedPermNamesStr, string(pName))
 	}
 
-	if len(allDefinedPermNames) == 0 {
+	if len(allDefinedPermNamesStr) == 0 {
 		appLogger.Error("Nenhuma permissão definida encontrada no PermissionManager! Seeding de roles abortado.")
 		return errors.New("nenhuma permissão definida para o seeding de roles")
 	}
 
-	// Converte para []string para o modelo DBRole
-	allDefinedPermNamesStr := make([]string, len(allDefinedPermNames))
-	for i, p := range allDefinedPermNames {
-		allDefinedPermNamesStr[i] = string(p)
-	}
-
-	// Permissões como strings para DBRole
 	editorPermsStr := []string{
 		string(PermNetworkView), string(PermNetworkCreate), string(PermNetworkUpdate), string(PermNetworkStatus),
-		string(PermCNPJView), string(PermCNPJCreate), string(PermCNPJDelete), // string(PermCNPJUpdate) se existir
+		string(PermCNPJView), string(PermCNPJCreate), string(PermCNPJUpdate), string(PermCNPJDelete),
 		string(PermExportData),
 		string(PermImportExecute), string(PermImportViewStatus),
 	}
@@ -306,7 +264,7 @@ func SeedInitialRolesAndPermissions(roleRepo repositories.RoleRepository, permMa
 	defaultRolesConfig := []struct {
 		Name        string
 		Description string
-		Permissions []string // Nomes das permissões
+		Permissions []string
 		IsSystem    bool
 	}{
 		{"admin", "Administrador do Sistema (acesso total)", allDefinedPermNamesStr, true},
@@ -320,13 +278,12 @@ func SeedInitialRolesAndPermissions(roleRepo repositories.RoleRepository, permMa
 
 	for _, roleCfg := range defaultRolesConfig {
 		roleNameLower := strings.ToLower(roleCfg.Name)
-		existingRole, err := roleRepo.GetByName(roleNameLower) // GetByName deve ser case-insensitive
+		existingRole, err := roleRepo.GetByName(roleNameLower)
 
 		if err != nil && !errors.Is(err, appErrors.ErrNotFound) {
 			return fmt.Errorf("erro ao verificar role '%s': %w", roleNameLower, err)
 		}
 
-		// Validar se as permissões da config existem no sistema
 		validPermsForRole := []string{}
 		for _, pNameStr := range roleCfg.Permissions {
 			if permManager.IsPermissionDefined(Permission(pNameStr)) {
@@ -336,21 +293,20 @@ func SeedInitialRolesAndPermissions(roleRepo repositories.RoleRepository, permMa
 			}
 		}
 
-		if errors.Is(err, appErrors.ErrNotFound) { // Role não existe, criar
+		if errors.Is(err, appErrors.ErrNotFound) {
 			appLogger.Infof("Criando role padrão: '%s'", roleNameLower)
-			newRole := models.RoleCreate{ // Supondo que RoleCreate aceite []string para Permissions
+			desc := roleCfg.Description // Copia para evitar problema com ponteiro em loop
+			newRole := models.RoleCreate{
 				Name:            roleNameLower,
-				Description:     &roleCfg.Description, // RoleCreate pode esperar ponteiro para string opcional
-				PermissionNames: validPermsForRole,    // Passa os nomes validados
-				// IsSystemRole é definido internamente pelo repositório ou serviço ao criar system roles
+				Description:     &desc,
+				PermissionNames: validPermsForRole,
 			}
-			// O método Create do RoleRepository deve lidar com a criação do DBRole e a associação das permissões
 			_, createErr := roleRepo.Create(newRole, true) // Passa isSystem=true
 			if createErr != nil {
 				return fmt.Errorf("erro ao criar role '%s': %w", roleNameLower, createErr)
 			}
 			createdCount++
-		} else { // Role existe, verificar e atualizar permissões se for system role
+		} else {
 			if existingRole.IsSystemRole {
 				currentPermsSet := make(map[string]bool)
 				for _, p := range existingRole.Permissions {
@@ -371,14 +327,20 @@ func SeedInitialRolesAndPermissions(roleRepo repositories.RoleRepository, permMa
 							break
 						}
 					}
+					if !permsChanged { // Checa também se target tem algo que current não tem
+						for p := range targetPermsSet {
+							if !currentPermsSet[p] {
+								permsChanged = true
+								break
+							}
+						}
+					}
 				}
 
 				if permsChanged {
 					appLogger.Infof("Atualizando permissões para role de sistema '%s'...", roleNameLower)
-					// O método Update do RoleRepository deve lidar com a atualização das permissões
-					// RoleUpdate pode precisar de um campo para todas as permissões
 					roleUpdateData := models.RoleUpdate{
-						PermissionNames: &validPermsForRole, // Passa o conjunto completo de permissões desejadas
+						PermissionNames: &validPermsForRole,
 					}
 					_, updateErr := roleRepo.Update(existingRole.ID, roleUpdateData)
 					if updateErr != nil {

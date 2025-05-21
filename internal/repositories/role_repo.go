@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
-	// Para Upsert em tabelas de junção ou preloading
+	// "gorm.io/gorm/clause" // Para OnConflict, se fosse usar upsert de roles
+
 	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
@@ -14,13 +15,28 @@ import (
 
 // RoleRepository define a interface para operações no repositório de roles.
 type RoleRepository interface {
+	// Create cria um novo role e associa suas permissões.
+	// `roleData.Name` deve estar normalizado (minúsculas).
+	// `isSystemRole` indica se o role é um role do sistema.
 	Create(roleData models.RoleCreate, isSystemRole bool) (*models.DBRole, error)
+
 	GetByID(roleID uint64) (*models.DBRole, error)
-	GetByName(name string) (*models.DBRole, error)
+	GetByName(name string) (*models.DBRole, error) // `name` deve estar normalizado (minúsculas).
 	GetAll() ([]models.DBRole, error)
+
+	// Update atualiza um role existente e/ou suas permissões.
+	// `roleUpdateData` campos devem estar normalizados.
 	Update(roleID uint64, roleUpdateData models.RoleUpdate) (*models.DBRole, error)
+
+	// Delete remove um role e suas associações.
+	// O serviço deve verificar se é um system role antes de chamar.
 	Delete(roleID uint64) error
+
+	// GetPermissionsForRole busca os nomes das permissões associadas a um roleID.
 	GetPermissionsForRole(roleID uint64) ([]string, error)
+
+	// SetRolePermissions define/sobrescreve todas as permissões para um role.
+	// `permissionNames` deve conter nomes de permissões válidos e normalizados.
 	SetRolePermissions(roleID uint64, permissionNames []string) error
 }
 
@@ -37,17 +53,20 @@ func NewGormRoleRepository(db *gorm.DB) RoleRepository {
 	return &gormRoleRepository{db: db}
 }
 
-// loadRolePermissions busca e anexa as permissões a um DBRole.
-// Esta é uma função helper interna.
+// loadRolePermissions busca e anexa os nomes das permissões a um DBRole.
+// Esta é uma função helper interna para reutilização.
 func (r *gormRoleRepository) loadRolePermissions(dbRole *models.DBRole) error {
 	if dbRole == nil || dbRole.ID == 0 {
-		return nil // Nada a fazer se o role for nil ou não tiver ID
+		dbRole.Permissions = []string{} // Garante que seja um slice vazio, não nil
+		return nil
 	}
 	var rolePerms []models.DBRolePermission
+	// Busca todas as entradas na tabela de junção para o roleID.
 	if err := r.db.Where("role_id = ?", dbRole.ID).Find(&rolePerms).Error; err != nil {
-		appLogger.Errorf("Erro ao buscar permissões para role ID %d: %v", dbRole.ID, err)
+		appLogger.Errorf("Erro ao buscar permissões para role ID %d ('%s'): %v", dbRole.ID, dbRole.Name, err)
 		return appErrors.WrapErrorf(err, "falha ao buscar permissões do role (GORM)")
 	}
+
 	dbRole.Permissions = make([]string, len(rolePerms))
 	for i, rp := range rolePerms {
 		dbRole.Permissions[i] = rp.PermissionName
@@ -56,14 +75,16 @@ func (r *gormRoleRepository) loadRolePermissions(dbRole *models.DBRole) error {
 }
 
 // Create cria um novo role e associa suas permissões.
-// Espera que roleData já tenha sido limpa e validada pelo serviço (exceto existência de permissões).
+// `roleData.Name` já deve estar normalizado (minúsculas) pelo serviço.
+// `roleData.PermissionNames` já devem ser validados pelo serviço.
 func (r *gormRoleRepository) Create(roleData models.RoleCreate, isSystemRole bool) (*models.DBRole, error) {
 	// O serviço já deve ter chamado CleanAndValidate em roleData.
-	// roleData.Name já deve estar em minúsculas.
+	// `roleData.Name` já está em minúsculas.
+	// O serviço também já validou se os `roleData.PermissionNames` existem no sistema.
 
-	// Verificar se já existe um role com o mesmo nome
-	_, err := r.GetByName(roleData.Name)
-	if err == nil { // Encontrou um existente
+	// Verificar se já existe um role com o mesmo nome (case-insensitive já tratado pela normalização).
+	_, err := r.GetByName(roleData.Name) // `roleData.Name` já está normalizado
+	if err == nil {                      // Encontrou um existente
 		appLogger.Warnf("Tentativa de criar role com nome já existente: '%s'", roleData.Name)
 		return nil, fmt.Errorf("%w: role com nome '%s' já existe", appErrors.ErrConflict, roleData.Name)
 	}
@@ -71,51 +92,50 @@ func (r *gormRoleRepository) Create(roleData models.RoleCreate, isSystemRole boo
 		appLogger.Errorf("Erro ao verificar existência do role '%s' antes de criar: %v", roleData.Name, err)
 		return nil, appErrors.WrapErrorf(err, "falha ao verificar existência do role antes de criar (GORM)")
 	}
-	// Se chegou aqui, é appErrors.ErrNotFound, o que é bom.
+	// Se ErrNotFound, podemos prosseguir.
 
 	dbRole := models.DBRole{
 		Name:         roleData.Name,
 		Description:  roleData.Description,
 		IsSystemRole: isSystemRole,
+		// CreatedAt e UpdatedAt são gerenciados por GORM autoCreateTime/autoUpdateTime
 	}
 
-	// Usar transação para garantir atomicidade na criação do role e suas permissões
+	// Usar transação para garantir atomicidade na criação do role e suas permissões.
 	txErr := r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&dbRole).Error; err != nil {
-			// A constraint UNIQUE no GORM/DB deve pegar nomes duplicados
+			// A constraint UNIQUE no GORM/DB deve pegar nomes duplicados.
 			if strings.Contains(strings.ToLower(err.Error()), "unique constraint") ||
 				strings.Contains(strings.ToLower(err.Error()), "duplicate key value violates unique constraint") {
-				return fmt.Errorf("%w: role com nome '%s' já existe (concorrência?)", appErrors.ErrConflict, roleData.Name)
+				return fmt.Errorf("%w: role com nome '%s' já existe (conflito no DB)", appErrors.ErrConflict, roleData.Name)
 			}
 			return appErrors.WrapErrorf(err, "falha ao criar role (GORM)")
 		}
 
-		// Associar permissões
+		// Associar permissões.
 		if len(roleData.PermissionNames) > 0 {
 			rolePerms := make([]models.DBRolePermission, len(roleData.PermissionNames))
 			for i, permName := range roleData.PermissionNames {
-				// TODO: O serviço deveria ter validado se permName existe no PermissionManager.
-				// Aqui, apenas assumimos que são válidos e os inserimos.
+				// O serviço já validou que `permName` existe no PermissionManager.
 				rolePerms[i] = models.DBRolePermission{RoleID: dbRole.ID, PermissionName: permName}
 			}
-			if err := tx.Create(&rolePerms).Error; err != nil {
+			if err := tx.Create(&rolePerms).Error; err != nil { // Cria as entradas na tabela de junção.
 				return appErrors.WrapErrorf(err, "falha ao associar permissões ao novo role (GORM)")
 			}
 		}
-		return nil // Commit
+		return nil // Commit da transação.
 	})
 
 	if txErr != nil {
 		appLogger.Errorf("Erro na transação de criação do role '%s': %v", roleData.Name, txErr)
-		return nil, txErr // Retorna o erro da transação (que já pode ser um appError)
+		return nil, txErr // Retorna o erro da transação.
 	}
 
-	// Preenche o campo DBRole.Permissions para o objeto retornado
-	// dbRole.Permissions já foi definido pela associação acima dentro da transação
-	// ou, se SetRolePermissions fosse chamado aqui:
-	if err := r.loadRolePermissions(&dbRole); err != nil {
-		// Não fatal para a criação, mas loga o aviso
-		appLogger.Warnf("Role '%s' criado, mas houve erro ao recarregar suas permissões para o objeto retornado: %v", dbRole.Name, err)
+	// Preenche o campo DBRole.Permissions para o objeto retornado.
+	// É importante fazer isso fora da transação, pois a transação já foi commitada ou rollbackada.
+	if errLoad := r.loadRolePermissions(&dbRole); errLoad != nil {
+		appLogger.Warnf("Role '%s' criado, mas houve erro ao recarregar suas permissões para o objeto retornado: %v", dbRole.Name, errLoad)
+		// Não retorna erro fatal aqui, o role foi criado.
 	}
 
 	appLogger.Infof("Novo Role criado: '%s' (ID: %d) com %d permissões.", dbRole.Name, dbRole.ID, len(dbRole.Permissions))
@@ -133,15 +153,21 @@ func (r *gormRoleRepository) GetByID(roleID uint64) (*models.DBRole, error) {
 		return nil, appErrors.WrapErrorf(err, "falha ao buscar role por ID (GORM)")
 	}
 	if err := r.loadRolePermissions(&dbRole); err != nil {
-		return nil, err // Erro ao carregar permissões é considerado falha na busca completa
+		// Se não conseguir carregar as permissões, o objeto DBRole está incompleto.
+		return nil, err
 	}
 	return &dbRole, nil
 }
 
-// GetByName busca um role pelo nome (case-insensitive), incluindo suas permissões.
+// GetByName busca um role pelo nome (normalizado para minúsculas), incluindo suas permissões.
 func (r *gormRoleRepository) GetByName(name string) (*models.DBRole, error) {
+	// Assume-se que `name` já foi normalizado para minúsculas pelo serviço.
+	if name == "" {
+		return nil, fmt.Errorf("%w: nome do role não pode ser vazio para busca", appErrors.ErrInvalidInput)
+	}
 	var dbRole models.DBRole
-	if err := r.db.Where("LOWER(name) = LOWER(?)", name).First(&dbRole).Error; err != nil {
+	// `name` no DB já está em minúsculas.
+	if err := r.db.Where("name = ?", name).First(&dbRole).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: role com nome '%s' não encontrado", appErrors.ErrNotFound, name)
 		}
@@ -154,7 +180,7 @@ func (r *gormRoleRepository) GetByName(name string) (*models.DBRole, error) {
 	return &dbRole, nil
 }
 
-// GetAll busca todos os roles, incluindo suas permissões.
+// GetAll busca todos os roles, incluindo suas permissões. Ordena por nome.
 func (r *gormRoleRepository) GetAll() ([]models.DBRole, error) {
 	var dbRoles []models.DBRole
 	if err := r.db.Order("name ASC").Find(&dbRoles).Error; err != nil {
@@ -162,28 +188,31 @@ func (r *gormRoleRepository) GetAll() ([]models.DBRole, error) {
 		return nil, appErrors.WrapErrorf(err, "falha ao buscar lista de roles (GORM)")
 	}
 
-	// Carregar permissões para cada role (pode ser N+1, otimizar se necessário)
-	// Otimização: Buscar todas as DBRolePermission de uma vez e mapear
+	// Carregar permissões para cada role.
+	// Otimização para evitar N+1 queries:
 	if len(dbRoles) > 0 {
 		roleIDs := make([]uint64, len(dbRoles))
 		for i, role := range dbRoles {
 			roleIDs[i] = role.ID
 		}
 		var allRolePerms []models.DBRolePermission
+		// Busca todas as permissões para os roles listados de uma vez.
 		if err := r.db.Where("role_id IN ?", roleIDs).Find(&allRolePerms).Error; err != nil {
 			appLogger.Errorf("Erro ao buscar todas as permissões para os roles listados: %v", err)
 			return nil, appErrors.WrapErrorf(err, "falha ao buscar permissões dos roles (GORM)")
 		}
 
+		// Mapeia as permissões para seus respectivos roles.
 		permsMap := make(map[uint64][]string)
 		for _, rp := range allRolePerms {
 			permsMap[rp.RoleID] = append(permsMap[rp.RoleID], rp.PermissionName)
 		}
 
-		for i := range dbRoles { // Usa índice para modificar o slice original
-			dbRoles[i].Permissions = permsMap[dbRoles[i].ID]
-			if dbRoles[i].Permissions == nil { // Garante que seja um slice vazio, não nil
-				dbRoles[i].Permissions = []string{}
+		for i := range dbRoles { // Usa índice para modificar o slice original.
+			if perms, ok := permsMap[dbRoles[i].ID]; ok {
+				dbRoles[i].Permissions = perms
+			} else {
+				dbRoles[i].Permissions = []string{} // Garante slice vazio, não nil.
 			}
 		}
 	}
@@ -191,60 +220,46 @@ func (r *gormRoleRepository) GetAll() ([]models.DBRole, error) {
 }
 
 // Update atualiza um role existente e/ou suas permissões.
-// Espera que roleUpdateData já tenha sido limpa e validada pelo serviço.
+// Campos em `roleUpdateData` já devem estar normalizados pelo serviço.
 func (r *gormRoleRepository) Update(roleID uint64, roleUpdateData models.RoleUpdate) (*models.DBRole, error) {
-	dbRole, err := r.GetByID(roleID) // GetByID já carrega permissões atuais
-	if err != nil {
-		return nil, err
-	}
+	// O serviço deve ter buscado o role e verificado se é system role antes de permitir alteração de nome.
+	// O serviço também valida os nomes de permissão em `roleUpdateData.PermissionNames`.
 
-	// O serviço deve impedir a renomeação de roles do sistema.
-	// Aqui, apenas aplicamos as mudanças.
-
-	updates := make(map[string]interface{})
+	updatesMap := make(map[string]interface{})
 	changedBasicFields := false
 
-	if roleUpdateData.Name != nil && strings.ToLower(*roleUpdateData.Name) != dbRole.Name {
-		// Verificar se o novo nome já está em uso por OUTRO role
-		cleanedNewName := strings.ToLower(*roleUpdateData.Name)
-		existingByName, errGet := r.GetByName(cleanedNewName)
-		if errGet == nil && existingByName.ID != roleID {
-			return nil, fmt.Errorf("%w: já existe outro role com o nome '%s'", appErrors.ErrConflict, cleanedNewName)
-		}
-		if errGet != nil && !errors.Is(errGet, appErrors.ErrNotFound) {
-			return nil, appErrors.WrapErrorf(errGet, "falha ao verificar novo nome para atualização de role (GORM)")
-		}
-		updates["name"] = cleanedNewName
+	if roleUpdateData.Name != nil {
+		// O serviço deve ter verificado conflito de nome.
+		updatesMap["name"] = *roleUpdateData.Name // Nome já normalizado
 		changedBasicFields = true
 	}
-	if roleUpdateData.Description != nil && (dbRole.Description == nil || *roleUpdateData.Description != *dbRole.Description) {
-		updates["description"] = roleUpdateData.Description // Pode ser nil para limpar descrição
+	if roleUpdateData.Description != nil { // Permite limpar descrição passando um ponteiro para string vazia (após trim)
+		updatesMap["description"] = roleUpdateData.Description // Pode ser nil para limpar descrição
 		changedBasicFields = true
 	}
+	// UpdatedAt será gerenciado pelo GORM autoUpdateTime.
 
-	// Usar transação para atualizar role e suas permissões atomicamente
 	txErr := r.db.Transaction(func(tx *gorm.DB) error {
 		if changedBasicFields {
-			if err := tx.Model(&models.DBRole{}).Where("id = ?", roleID).Updates(updates).Error; err != nil {
-				// Verificar erro de nome duplicado na atualização (concorrência)
+			if err := tx.Model(&models.DBRole{}).Where("id = ?", roleID).Updates(updatesMap).Error; err != nil {
 				if strings.Contains(strings.ToLower(err.Error()), "unique constraint") && roleUpdateData.Name != nil {
-					return fmt.Errorf("%w: já existe outro role com o nome '%s' (concorrência?)", appErrors.ErrConflict, *roleUpdateData.Name)
+					return fmt.Errorf("%w: já existe outro role com o nome '%s' (conflito no DB)", appErrors.ErrConflict, *roleUpdateData.Name)
 				}
 				return appErrors.WrapErrorf(err, "falha ao atualizar campos do role (GORM)")
 			}
 		}
 
-		// Se PermissionNames for fornecido, substitui todas as permissões
+		// Se `PermissionNames` for fornecido (não nil), substitui todas as permissões.
 		if roleUpdateData.PermissionNames != nil {
-			// Deletar permissões antigas
+			// 1. Deletar permissões antigas do role.
 			if err := tx.Where("role_id = ?", roleID).Delete(&models.DBRolePermission{}).Error; err != nil {
 				return appErrors.WrapErrorf(err, "falha ao limpar permissões antigas do role (GORM)")
 			}
-			// Adicionar novas permissões
+			// 2. Adicionar novas permissões.
 			if len(*roleUpdateData.PermissionNames) > 0 {
 				newPerms := make([]models.DBRolePermission, len(*roleUpdateData.PermissionNames))
 				for i, permName := range *roleUpdateData.PermissionNames {
-					// TODO: O serviço deve ter validado se permName existe no PermissionManager
+					// O serviço já validou que `permName` existe.
 					newPerms[i] = models.DBRolePermission{RoleID: roleID, PermissionName: permName}
 				}
 				if err := tx.Create(&newPerms).Error; err != nil {
@@ -252,7 +267,7 @@ func (r *gormRoleRepository) Update(roleID uint64, roleUpdateData models.RoleUpd
 				}
 			}
 		}
-		return nil // Commit
+		return nil // Commit.
 	})
 
 	if txErr != nil {
@@ -260,11 +275,11 @@ func (r *gormRoleRepository) Update(roleID uint64, roleUpdateData models.RoleUpd
 		return nil, txErr
 	}
 
-	// Recarregar o role atualizado com suas permissões
+	// Recarregar o role atualizado com suas permissões.
 	updatedRole, err := r.GetByID(roleID)
 	if err != nil {
 		appLogger.Errorf("Falha ao recarregar role ID %d após update: %v", roleID, err)
-		return nil, err // Retorna erro se não conseguir recarregar
+		return nil, fmt.Errorf("falha ao recarregar role após atualização: %w", err)
 	}
 
 	appLogger.Infof("Role ID %d ('%s') atualizado.", roleID, updatedRole.Name)
@@ -272,55 +287,60 @@ func (r *gormRoleRepository) Update(roleID uint64, roleUpdateData models.RoleUpd
 }
 
 // Delete remove um role e suas associações.
-// O serviço deve verificar se é um system role antes de chamar.
+// O serviço deve ter verificado se o role é `IsSystemRole` antes de chamar este método.
 func (r *gormRoleRepository) Delete(roleID uint64) error {
-	// Verificar se o role existe
-	dbRole, err := r.GetByID(roleID) // GetByID já retorna ErrNotFound
-	if err != nil {
-		return err
+	// Opcional: buscar o role primeiro para logar o nome ou verificar IsSystemRole novamente.
+	var roleToDelete models.DBRole
+	if err := r.db.Select("name", "is_system_role").First(&roleToDelete, roleID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: role com ID %d não encontrado para exclusão", appErrors.ErrNotFound, roleID)
+		}
+		return appErrors.WrapErrorf(err, "falha ao verificar role antes da exclusão")
 	}
-
-	// O serviço deve ter impedido a exclusão de system roles
-	if dbRole.IsSystemRole { // Dupla checagem
-		return fmt.Errorf("%w: role de sistema '%s' não pode ser excluído pelo repositório", appErrors.ErrPermissionDenied, dbRole.Name)
+	if roleToDelete.IsSystemRole { // Dupla checagem, embora o serviço deva ter feito isso.
+		return fmt.Errorf("%w: role de sistema '%s' não pode ser excluído pelo repositório", appErrors.ErrPermissionDenied, roleToDelete.Name)
 	}
 
 	txErr := r.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Remover associações de permissões
+		// 1. Remover associações de permissões (tabela `role_permissions`).
 		if err := tx.Where("role_id = ?", roleID).Delete(&models.DBRolePermission{}).Error; err != nil {
 			return appErrors.WrapErrorf(err, "falha ao remover associações de permissões do role (GORM)")
 		}
 
-		// 2. Remover associações de usuários (tabela user_roles)
-		//    Se estiver usando GORM many2many para User-Role, ele pode lidar com isso
-		//    automaticamente com `Select("Users").Delete(&dbRole)` ou limpando a associação
-		//    nos usuários. Ou deletar manualmente da tabela de junção:
+		// 2. Remover associações de usuários (tabela `user_roles`).
+		//    O GORM com `many2many` e `constraint:OnDelete:CASCADE` no modelo `DBUser` para `Roles`
+		//    poderia cuidar disso automaticamente na exclusão do role.
+		//    Se não houver CASCADE, ou para ser explícito:
 		if err := tx.Where("role_id = ?", roleID).Delete(&models.DBUserRole{}).Error; err != nil {
-			// Se houver constraint FK de users para user_roles, isso pode não ser necessário
-			// ou pode falhar se não for feito na ordem correta.
-			// GORM com `Association("Users").Clear()` no objeto DBRole antes de deletar o role é uma opção.
-			// Este delete manual é mais explícito se não confiar na mágica do ORM.
-			appLogger.Warnf("Pode haver usuários ainda associados (não tratados por este Delete) ao role ID %d se não usar cascade ou hooks.", roleID)
-			// return appErrors.WrapErrorf(err, "falha ao remover associações de usuários do role (GORM)")
+			// Este erro pode indicar que usuários ainda estão usando este role, e não há CASCADE.
+			// Dependendo da política, pode-se retornar ErrConflict aqui.
+			appLogger.Warnf("Erro (ou nenhuma linha afetada) ao remover associações de usuários para role ID %d. Pode indicar que não havia usuários ou um problema de constraint. Erro: %v", roleID, err)
+			// Não retornar erro fatal aqui, a menos que seja uma violação de constraint que impeça a exclusão do role.
 		}
 
-		// 3. Deletar o role
-		if err := tx.Delete(&models.DBRole{}, roleID).Error; err != nil {
-			return appErrors.WrapErrorf(err, "falha ao excluir o role (GORM)")
+		// 3. Deletar o role da tabela `roles`.
+		result := tx.Delete(&models.DBRole{}, roleID)
+		if result.Error != nil {
+			// Verificar se o erro é de FK (se algum usuário ainda está referenciando este role
+			// e não há ON DELETE SET NULL/CASCADE na tabela `user_roles`).
+			if strings.Contains(strings.ToLower(result.Error.Error()), "foreign key constraint") {
+				return fmt.Errorf("%w: não foi possível excluir o role ID %d pois ele pode estar em uso por usuários e as constraints impedem", appErrors.ErrConflict, roleID)
+			}
+			return appErrors.WrapErrorf(result.Error, "falha ao excluir o role (GORM)")
 		}
-		return nil // Commit
+		if result.RowsAffected == 0 {
+			// Se o role foi deletado entre a verificação e este ponto.
+			return fmt.Errorf("%w: role com ID %d não encontrado durante a operação de exclusão (ou já excluído)", appErrors.ErrNotFound, roleID)
+		}
+		return nil // Commit.
 	})
 
 	if txErr != nil {
-		appLogger.Errorf("Erro na transação de exclusão do role ID %d: %v", roleID, txErr)
-		// Verificar se o erro é de FK (usuários ainda associados)
-		if strings.Contains(strings.ToLower(txErr.Error()), "foreign key constraint") {
-			return fmt.Errorf("%w: não foi possível excluir o role ID %d pois ele pode estar em uso por usuários", appErrors.ErrConflict, roleID)
-		}
+		appLogger.Errorf("Erro na transação de exclusão do role ID %d ('%s'): %v", roleID, roleToDelete.Name, txErr)
 		return txErr
 	}
 
-	appLogger.Infof("Role '%s' (ID: %d) excluído.", dbRole.Name, roleID)
+	appLogger.Infof("Role '%s' (ID: %d) e suas associações de permissão/usuário foram excluídos.", roleToDelete.Name, roleID)
 	return nil
 }
 
@@ -339,29 +359,34 @@ func (r *gormRoleRepository) GetPermissionsForRole(roleID uint64) ([]string, err
 }
 
 // SetRolePermissions define/sobrescreve todas as permissões para um role.
+// `permissionNames` deve conter nomes de permissões válidos e normalizados.
 func (r *gormRoleRepository) SetRolePermissions(roleID uint64, permissionNames []string) error {
-	// Verificar se o role existe
-	if _, err := r.GetByID(roleID); err != nil {
-		return err // Retorna ErrNotFound se não existir
-	}
+	// Opcional: Verificar se o role existe primeiro.
+	// var count int64
+	// if err := r.db.Model(&models.DBRole{}).Where("id = ?", roleID).Count(&count).Error; err != nil {
+	// 	return appErrors.WrapErrorf(err, "falha ao verificar existência do role ID %d antes de setar permissões", roleID)
+	// }
+	// if count == 0 {
+	// 	return fmt.Errorf("%w: role com ID %d não encontrado para definir permissões", appErrors.ErrNotFound, roleID)
+	// }
 
 	txErr := r.db.Transaction(func(tx *gorm.DB) error {
-		// Deletar permissões antigas
+		// Deletar permissões antigas.
 		if err := tx.Where("role_id = ?", roleID).Delete(&models.DBRolePermission{}).Error; err != nil {
 			return appErrors.WrapErrorf(err, "falha ao limpar permissões antigas do role (GORM)")
 		}
-		// Adicionar novas permissões
+		// Adicionar novas permissões, se houver.
 		if len(permissionNames) > 0 {
 			newPerms := make([]models.DBRolePermission, len(permissionNames))
 			for i, permName := range permissionNames {
-				// TODO: Serviço deve validar se permName existe no PermissionManager
+				// O serviço deve ter validado se permName existe no PermissionManager.
 				newPerms[i] = models.DBRolePermission{RoleID: roleID, PermissionName: permName}
 			}
 			if err := tx.Create(&newPerms).Error; err != nil {
 				return appErrors.WrapErrorf(err, "falha ao associar novas permissões ao role (GORM)")
 			}
 		}
-		return nil // Commit
+		return nil // Commit.
 	})
 
 	if txErr != nil {
@@ -369,6 +394,6 @@ func (r *gormRoleRepository) SetRolePermissions(roleID uint64, permissionNames [
 		return txErr
 	}
 
-	appLogger.Infof("Permissões atualizadas para Role ID %d. Total: %d", roleID, len(permissionNames))
+	appLogger.Infof("Permissões atualizadas para Role ID %d. Total de permissões definidas: %d", roleID, len(permissionNames))
 	return nil
 }

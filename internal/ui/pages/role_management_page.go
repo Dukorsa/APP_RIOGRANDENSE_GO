@@ -7,10 +7,13 @@ import (
 	"sort"
 	"strings"
 
-	// "time"
+	// "time" // Não usado diretamente para timers aqui
 
 	"gioui.org/font"
 	"gioui.org/layout"
+
+	// "gioui.org/op/clip"   // Para desenhar separador, se necessário
+	// "gioui.org/op/paint"  // Para desenhar separador
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -23,50 +26,50 @@ import (
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
-	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/icons"
 )
 
-// RoleManagementPage gerencia a UI para Roles e Permissões.
+// RoleManagementPage gerencia a UI para Roles (Perfis) e suas Permissões.
 type RoleManagementPage struct {
 	router         *ui.Router
 	cfg            *core.Config
 	roleService    services.RoleService
-	auditService   services.AuditLogService // Para logs feitos diretamente pela página, se houver
-	permManager    *auth.PermissionManager  // Para listar todas as permissões disponíveis
+	auditService   services.AuditLogService
+	permManager    *auth.PermissionManager // Para listar todas as permissões disponíveis e verificar PermRoleManage.
 	sessionManager *auth.SessionManager
 
 	// Estado da UI
 	isLoading      bool
-	allSystemRoles []*models.RolePublic       // Lista completa de roles carregados
-	allSystemPerms map[auth.Permission]string // Todas as permissões definidas no sistema
-	selectedRole   *models.RolePublic         // Role atualmente selecionado na lista
-	statusMessage  string
+	allSystemRoles []*models.RolePublic       // Lista completa de roles carregados do serviço.
+	allSystemPerms map[auth.Permission]string // Todas as permissões definidas no sistema (cacheado).
+	sortedPermKeys []auth.Permission          // Chaves de `allSystemPerms` ordenadas para exibição.
+	selectedRole   *models.RolePublic         // Role atualmente selecionado na lista para edição.
+	statusMessage  string                     // Mensagem de feedback global para a página.
 	messageColor   color.NRGBA
 
 	// Widgets do Painel Esquerdo (Lista de Roles)
 	roleList       layout.List
-	roleClickables []widget.Clickable // Um por role na lista
+	roleClickables []widget.Clickable // Um clickable por role na lista.
 	newRoleBtn     widget.Clickable
 	deleteRoleBtn  widget.Clickable
 
 	// Widgets do Painel Direito (Detalhes do Role e Permissões)
 	roleNameInput        widget.Editor
-	roleDescriptionInput widget.Editor
-	permissionCheckboxes map[auth.Permission]*widget.Bool // Checkbox para cada permissão
-	permList             layout.List                      // Para scroll das permissões
+	roleDescriptionInput widget.Editor                    // Editor para descrição (pode ser multilinhas).
+	permissionCheckboxes map[auth.Permission]*widget.Bool // Checkbox para cada permissão.
+	permList             layout.List                      // Para scroll da lista de permissões.
 	saveRoleBtn          widget.Clickable
 	cancelChangesBtn     widget.Clickable
 
 	// Controle de edição
-	isEditingNewRole bool // True se estiver criando um novo role
-	formChanged      bool // True se algo no formulário do painel direito foi alterado
+	isEditingNewRole bool // True se o painel direito estiver no modo de criação de um novo role.
+	formChanged      bool // True se algo no formulário do painel direito (nome, descrição, permissões) foi alterado.
 
 	spinner *components.LoadingSpinner
 
-	firstLoadDone bool
+	firstLoadDone bool // Para controlar o carregamento inicial de dados.
 }
 
-// NewRoleManagementPage cria uma nova instância.
+// NewRoleManagementPage cria uma nova instância da página de gerenciamento de roles.
 func NewRoleManagementPage(
 	router *ui.Router,
 	cfg *core.Config,
@@ -84,66 +87,94 @@ func NewRoleManagementPage(
 		sessionManager:       sessMan,
 		roleList:             layout.List{Axis: layout.Vertical},
 		permList:             layout.List{Axis: layout.Vertical},
-		spinner:              components.NewLoadingSpinner(),
-		allSystemPerms:       permMan.GetAllDefinedPermissions(), // Carrega definições de permissão
+		spinner:              components.NewLoadingSpinner(theme.Colors.Primary),
+		allSystemPerms:       permMan.GetAllDefinedPermissions(), // Carrega definições de permissão.
 		permissionCheckboxes: make(map[auth.Permission]*widget.Bool),
 	}
+
 	p.roleNameInput.SingleLine = true
 	p.roleNameInput.Hint = "Nome do Perfil (ex: editor_chefe)"
-	// p.roleDescriptionInput.SingleLine = false; p.roleDescriptionInput.Hint = "Descrição..." // Editor de múltiplas linhas
-	// O widget.Editor padrão é multilinhas se não for SingleLine=true.
+	p.roleDescriptionInput.Hint = "Descrição do perfil (opcional)"
+	// `p.roleDescriptionInput.SingleLine = false` é o padrão para Editor.
 
-	// Inicializa os checkboxes de permissão (uma vez)
+	// Inicializa os checkboxes de permissão e ordena as chaves de permissão para exibição.
+	p.sortedPermKeys = make([]auth.Permission, 0, len(p.allSystemPerms))
 	for permKey := range p.allSystemPerms {
-		p.permissionCheckboxes[permKey] = new(widget.Bool)
+		p.sortedPermKeys = append(p.sortedPermKeys, permKey)
+		p.permissionCheckboxes[permKey] = new(widget.Bool) // Cria um widget.Bool para cada.
 	}
+	// Ordena as chaves de permissão alfabeticamente para exibição consistente.
+	sort.Slice(p.sortedPermKeys, func(i, j int) bool {
+		return p.sortedPermKeys[i] < p.sortedPermKeys[j]
+	})
 
 	return p
 }
 
+// OnNavigatedTo é chamado quando a página se torna ativa.
 func (p *RoleManagementPage) OnNavigatedTo(params interface{}) {
 	appLogger.Info("Navegou para RoleManagementPage")
-	p.clearDetailsPanel(false) // Limpa painel direito, mas não a seleção
+	p.clearDetailsPanel(false) // Limpa painel direito, mas mantém seleção da lista (se houver).
+	p.statusMessage = ""
+
+	currentSession, errSess := p.sessionManager.GetCurrentSession()
+	if errSess != nil || currentSession == nil {
+		p.router.GetAppWindow().HandleLogout()
+		return
+	}
+	// Verifica permissão para gerenciar roles.
+	if err := p.permManager.CheckPermission(currentSession, auth.PermRoleManage, nil); err != nil {
+		p.statusMessage = fmt.Sprintf("Acesso negado à página de gerenciamento de perfis: %v", err)
+		p.messageColor = theme.Colors.Danger
+		p.allSystemRoles = []*models.RolePublic{} // Limpa dados se não tem permissão.
+		p.router.GetAppWindow().Invalidate()
+		return
+	}
+
 	if !p.firstLoadDone {
-		p.loadRolesAndPermissions() // Carrega roles e preenche a lista de permissões
+		p.loadRoles(currentSession)
 		p.firstLoadDone = true
 	} else {
-		// Se já carregou, apenas invalida. A lista de roles pode ter mudado.
-		// Poderia recarregar os roles se houver chance de mudança externa.
-		p.router.GetAppWindow().Invalidate()
+		p.loadRoles(currentSession) // Recarrega para ter dados frescos.
 	}
 }
 
+// OnNavigatedFrom é chamado quando o router navega para fora desta página.
 func (p *RoleManagementPage) OnNavigatedFrom() {
 	appLogger.Info("Navegando para fora da RoleManagementPage")
 	p.isLoading = false
 	p.spinner.Stop(p.router.GetAppWindow().Context())
 }
 
-func (p *RoleManagementPage) loadRolesAndPermissions() {
+// loadRoles carrega a lista de roles do serviço.
+func (p *RoleManagementPage) loadRoles(currentSession *auth.SessionData) {
+	if p.isLoading {
+		return
+	}
 	p.isLoading = true
-	p.statusMessage = "Carregando perfis e permissões..."
+	p.statusMessage = "Carregando perfis..."
 	p.messageColor = theme.Colors.TextMuted
 	p.spinner.Start(p.router.GetAppWindow().Context())
 	p.router.GetAppWindow().Invalidate()
 
-	go func() {
+	go func(sess *auth.SessionData) {
+		var loadedRoles []*models.RolePublic
 		var loadErr error
-		currentSession, errSess := p.sessionManager.GetCurrentSession()
-		if errSess != nil || currentSession == nil {
-			loadErr = fmt.Errorf("sessão de administrador inválida: %v", errSess)
+
+		// Permissão já verificada em OnNavigatedTo.
+		roles, err := s.roleService.GetAllRoles(sess)
+		if err != nil {
+			loadErr = fmt.Errorf("falha ao carregar perfis: %w", err)
 		} else {
-			roles, err := p.roleService.GetAllRoles(currentSession)
-			if err != nil {
-				loadErr = fmt.Errorf("falha ao carregar perfis: %w", err)
-			} else {
-				// Ordenar roles para exibição consistente
-				sort.SliceStable(roles, func(i, j int) bool {
-					return strings.ToLower(roles[i].Name) < strings.ToLower(roles[j].Name)
-				})
-				p.allSystemRoles = roles
-			}
-			// Permissões já carregadas em NewRoleManagementPage via p.permManager.GetAllDefinedPermissions()
+			// Ordenar roles para exibição consistente na lista.
+			sort.SliceStable(roles, func(i, j int) bool {
+				// System roles primeiro, depois por nome.
+				if roles[i].IsSystemRole != roles[j].IsSystemRole {
+					return roles[i].IsSystemRole // true (system) vem antes de false (custom)
+				}
+				return strings.ToLower(roles[i].Name) < strings.ToLower(roles[j].Name)
+			})
+			loadedRoles = roles
 		}
 
 		p.router.GetAppWindow().Execute(func() {
@@ -152,117 +183,147 @@ func (p *RoleManagementPage) loadRolesAndPermissions() {
 			if loadErr != nil {
 				p.statusMessage = loadErr.Error()
 				p.messageColor = theme.Colors.Danger
+				p.allSystemRoles = []*models.RolePublic{}
 				appLogger.Errorf("Erro ao carregar dados para RoleManagementPage: %v", loadErr)
 			} else {
-				p.statusMessage = fmt.Sprintf("%d perfis carregados.", len(p.allSystemRoles))
-				p.messageColor = theme.Colors.Success
-				// Ajusta o tamanho do slice de clickables para os roles
+				p.allSystemRoles = loadedRoles
+				if len(p.allSystemRoles) > 0 {
+					p.statusMessage = fmt.Sprintf("%d perfis carregados.", len(p.allSystemRoles))
+					p.messageColor = theme.Colors.Success
+				} else {
+					p.statusMessage = "Nenhum perfil encontrado."
+					p.messageColor = theme.Colors.Info
+				}
+				// Ajusta o tamanho do slice de clickables.
 				if len(p.allSystemRoles) != len(p.roleClickables) {
 					p.roleClickables = make([]widget.Clickable, len(p.allSystemRoles))
+				}
+				// Se um role estava selecionado, tenta manter a seleção se ele ainda existir.
+				if p.selectedRole != nil {
+					foundSelectedAgain := false
+					for _, r := range p.allSystemRoles {
+						if r.ID == p.selectedRole.ID {
+							p.selectRole(r) // Recarrega o painel direito com dados atualizados
+							foundSelectedAgain = true
+							break
+						}
+					}
+					if !foundSelectedAgain {
+						p.clearDetailsPanel(true) // Limpa se o selecionado não existe mais
+					}
 				}
 			}
 			p.updateButtonStates()
 			p.router.GetAppWindow().Invalidate()
 		})
-	}()
+	}(currentSession)
 }
 
+// Layout é o método principal de desenho da página.
 func (p *RoleManagementPage) Layout(gtx layout.Context) layout.Dimensions {
 	th := p.router.GetAppWindow().Theme()
 
-	// Processar eventos/cliques dos botões principais
-	if p.newRoleBtn.Clicked(gtx) {
+	// Processar eventos/cliques dos botões principais.
+	if p.newRoleBtn.Clicked(gtx) && !p.isLoading {
 		p.handleNewRole()
 	}
-	if p.deleteRoleBtn.Clicked(gtx) {
+	if p.deleteRoleBtn.Clicked(gtx) && !p.isLoading {
 		p.handleDeleteRole()
 	}
-	if p.saveRoleBtn.Clicked(gtx) {
+	if p.saveRoleBtn.Clicked(gtx) && !p.isLoading {
 		p.handleSaveRole()
 	}
-	if p.cancelChangesBtn.Clicked(gtx) {
+	if p.cancelChangesBtn.Clicked(gtx) && !p.isLoading {
 		p.handleCancelChanges()
 	}
 
-	// Processar eventos de mudança nos inputs do painel direito
-	for _, e := range p.roleNameInput.Events(gtx) {
-		if _, ok := e.(widget.ChangeEvent); ok {
-			p.formChanged = true
-			p.updateButtonStates()
-		}
+	// Processar eventos de mudança nos inputs do painel direito.
+	if p.roleNameInput.Update(gtx) || p.roleDescriptionInput.Update(gtx) {
+		p.formChanged = true
+		p.updateButtonStates()
 	}
-	for _, e := range p.roleDescriptionInput.Events(gtx) {
-		if _, ok := e.(widget.ChangeEvent); ok {
-			p.formChanged = true
-			p.updateButtonStates()
-		}
-	}
+	// Checkboxes de permissão já atualizam `p.formChanged` em seus eventos de Update.
 	for _, chk := range p.permissionCheckboxes {
-		if chk.Update(gtx) { // Update processa o evento de mudança de estado do checkbox
+		if chk.Update(gtx) { // Update processa o evento de mudança e retorna true se mudou.
 			p.formChanged = true
 			p.updateButtonStates()
 		}
 	}
 
-	// Layout com Splitter (simulado com Flex)
-	// Um Splitter real em Gio requer mais trabalho com estado e eventos de arrastar.
-	// Vamos usar Flex por simplicidade, mas a proporção pode ser fixa.
-	leftPanelWeight := float32(0.3)
-	rightPanelWeight := float32(0.7)
-
+	// Layout dividido em dois painéis: Esquerdo (Lista de Roles) e Direito (Detalhes do Role).
+	// Usar Flex para simular um splitter.
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-		layout.Flexed(leftPanelWeight, func(gtx C) D {
+		layout.Flexed(0.3, func(gtx C) D { // Painel Esquerdo (30% da largura)
 			return p.layoutLeftPanel(gtx, th)
 		}),
-		layout.Rigid(func(gtx C) D { // Separador Vertical
-			// Linha vertical fina
-			//return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx,
-			//	func(gtx C) D {
-			//		paint.FillShape(gtx.Ops, theme.Colors.Border, clip.Rect{Max: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}.Op())
-			//		return layout.Dimensions{Size: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}
-			//	})
-			return layout.Dimensions{} // Sem separador visível por enquanto para simplificar
+		layout.Rigid(func(gtx C) D { // Separador Vertical Fino
+			return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx,
+				func(gtx C) D {
+					// paint.FillShape(gtx.Ops, theme.Colors.Border, clip.Rect{Max: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}.Op())
+					// return layout.Dimensions{Size: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}
+					return layout.Dimensions{} // Sem separador visível por agora para simplificar
+				})
 		}),
-		layout.Flexed(rightPanelWeight, func(gtx C) D {
+		layout.Flexed(0.7, func(gtx C) D { // Painel Direito (70% da largura)
 			return p.layoutRightPanel(gtx, th)
 		}),
-		// TODO: Spinner overlay sobre toda a página
+		// Spinner overlay global para a página (se `p.isLoading`).
+		//layout.Expanded(func(gtx C) D {
+		//	if p.isLoading {
+		//		return layout.Center.Layout(gtx, p.spinner.Layout)
+		//	}
+		//	return D{}
+		//}),
 	)
 }
 
+// layoutLeftPanel desenha o painel esquerdo com a lista de roles e botões de ação.
 func (p *RoleManagementPage) layoutLeftPanel(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	// Processar cliques na lista de roles
+	// Processar cliques na lista de roles.
 	for i := range p.allSystemRoles {
 		if i >= len(p.roleClickables) {
 			break
-		}
-		if p.roleClickables[i].Clicked(gtx) {
+		} // Segurança
+		if p.roleClickables[i].Clicked(gtx) && !p.isLoading {
 			p.selectRole(p.allSystemRoles[i])
 		}
 	}
 
-	return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, // Pequeno espaço antes do "divisor"
+	return layout.UniformInset(theme.PagePadding).Layout(gtx, // Padding para o painel
 		func(gtx C) D {
-			return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceEnd}.Layout(gtx,
-				layout.Rigid(material.Subtitle1(th, "Perfis Existentes").Layout),
-				layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-				layout.Flexed(1, func(gtx C) D { // Lista de Roles
+			return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceBetween}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(material.Subtitle1(th, "Perfis de Usuário").Layout),
+						layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
+					)
+				}),
+				layout.Flexed(1, func(gtx C) D { // Lista de Roles com scroll
 					return p.roleList.Layout(gtx, len(p.allSystemRoles), func(gtx C, index int) D {
 						if index < 0 || index >= len(p.allSystemRoles) {
 							return D{}
 						}
 						role := p.allSystemRoles[index]
 
+						// Item da lista clicável
 						item := material.Clickable(gtx, &p.roleClickables[index], func(gtx C) D {
+							// Conteúdo do item (Nome do Role, talvez ícone de sistema)
 							label := material.Body1(th, strings.Title(role.Name)) // Capitaliza para exibição
 							if p.selectedRole != nil && p.selectedRole.ID == role.ID {
 								label.Font.Weight = font.Bold
-								label.Color = theme.Colors.Primary
+								label.Color = theme.Colors.PrimaryText // Texto branco se fundo primário
+							} else if role.IsSystemRole {
+								label.Color = theme.Colors.TextMuted // Cinza para roles do sistema não selecionados
 							}
-							// TODO: Ícone (ex: cadeado para system role)
+
+							// TODO: Adicionar ícone para system roles (ex: um cadeado)
+							// iconWidget := layout.Dimensions{}
+							// if role.IsSystemRole { iconWidget = ... }
+
 							return layout.UniformInset(unit.Dp(8)).Layout(gtx, label.Layout)
 						})
-						// Adicionar fundo se selecionado
+
+						// Destaque de fundo para o item selecionado.
 						if p.selectedRole != nil && p.selectedRole.ID == role.ID {
 							return layout.Background{Color: theme.Colors.PrimaryLight}.Layout(gtx, item.Layout)
 						}
@@ -270,148 +331,194 @@ func (p *RoleManagementPage) layoutLeftPanel(gtx layout.Context, th *material.Th
 					})
 				}),
 				layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-				layout.Rigid(func(gtx C) D { // Botões Novo/Excluir
-					newBtn := material.Button(th, &p.newRoleBtn, "Novo Perfil")
-					delBtn := material.Button(th, &p.deleteRoleBtn, "Excluir Perfil")
-					// delBtn.SetEnabled(p.selectedRole != nil && !p.selectedRole.IsSystemRole)
-					if p.selectedRole == nil || p.selectedRole.IsSystemRole {
-						delBtn.Style.뭄Color = theme.Colors.TextMuted // Visualmente desabilitado
+				layout.Rigid(func(gtx C) D { // Botões Novo/Excluir Perfil
+					newBtnWidget := material.Button(th, &p.newRoleBtn, "Novo Perfil")
+					delBtnWidget := material.Button(th, &p.deleteRoleBtn, "Excluir Perfil")
+
+					// Habilitar/desabilitar visualmente o botão Excluir.
+					// A lógica de clique já verifica `p.isLoading`.
+					canDelete := (p.selectedRole != nil && !p.selectedRole.IsSystemRole)
+					if !canDelete {
+						delBtnWidget.Style.TextColor = theme.Colors.TextMuted
+						delBtnWidget.Style.Background = theme.Colors.Grey300
 					}
 
 					return layout.Flex{Spacing: layout.SpaceBetween}.Layout(gtx,
-						layout.Flexed(1, newBtn.Layout),
-						layout.Flexed(1, delBtn.Layout),
+						layout.Flexed(1, newBtnWidget.Layout),
+						layout.Rigid(layout.Spacer{Width: theme.DefaultVSpacer}.Layout),
+						layout.Flexed(1, delBtnWidget.Layout),
 					)
 				}),
 			)
 		})
 }
 
+// layoutRightPanel desenha o painel direito com os detalhes do role selecionado e suas permissões.
 func (p *RoleManagementPage) layoutRightPanel(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	canEditDetails := p.selectedRole != nil || p.isEditingNewRole
+	// Determina se os campos no painel direito devem ser editáveis.
+	canEditDetails := (p.selectedRole != nil && !p.selectedRole.IsSystemRole) || p.isEditingNewRole
 	canEditName := canEditDetails && (p.isEditingNewRole || (p.selectedRole != nil && !p.selectedRole.IsSystemRole))
 
-	nameEditor := material.Editor(th, &p.roleNameInput, p.roleNameInput.Hint)
-	// nameEditor.SetEnabled(canEditName) // Controlar interatividade externamente
+	nameEditorLayout := material.Editor(th, &p.roleNameInput, p.roleNameInput.Hint).Layout
+	// Para desabilitar visualmente o editor de nome se `!canEditName`,
+	// poderia-se mudar a cor de fundo/texto ou usar um Label em vez de Editor.
+	// Por agora, a interatividade é controlada por não processar eventos se não deve editar.
 
-	descEditor := material.Editor(th, &p.roleDescriptionInput, "Descrição do perfil...")
-	// descEditor.SetEnabled(canEditDetails)
+	descEditorLayout := material.Editor(th, &p.roleDescriptionInput, p.roleDescriptionInput.Hint).Layout
+	// Similarmente para descrição.
 
-	// Agrupar permissões por prefixo para melhor UI
+	// Agrupa permissões por prefixo (ex: "user:", "network:") para melhor organização na UI.
 	groupedPerms := make(map[string][]auth.Permission)
-	var prefixes []string
-	for permKey := range p.allSystemPerms {
-		prefix := strings.Split(string(permKey), ":")[0]
+	var sortedGroupPrefixes []string
+	for _, permKey := range p.sortedPermKeys { // Usa as chaves já ordenadas.
+		prefix := strings.SplitN(string(permKey), ":", 2)[0] // Pega a parte antes do primeiro ":"
 		if _, exists := groupedPerms[prefix]; !exists {
-			prefixes = append(prefixes, prefix)
+			sortedGroupPrefixes = append(sortedGroupPrefixes, prefix) // Adiciona prefixo à lista de grupos se novo.
 		}
 		groupedPerms[prefix] = append(groupedPerms[prefix], permKey)
 	}
-	sort.Strings(prefixes) // Ordena os grupos de permissão
+	// `sortedGroupPrefixes` não precisa ser reordenado se `p.sortedPermKeys` já estiver ordenado.
 
-	return layout.Inset{Left: unit.Dp(8)}.Layout(gtx,
+	return layout.UniformInset(theme.PagePadding).Layout(gtx, // Padding para o painel
 		func(gtx C) D {
-			return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceEnd}.Layout(gtx,
-				layout.Rigid(material.Subtitle1(th, "Detalhes do Perfil").Layout),
+			return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceBetween}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					title := "Detalhes do Perfil"
+					if p.isEditingNewRole {
+						title = "Criar Novo Perfil"
+					}
+					if p.selectedRole != nil && !p.isEditingNewRole {
+						title = fmt.Sprintf("Editando Perfil: %s", strings.Title(p.selectedRole.Name))
+					}
+					return material.Subtitle1(th, title).Layout(gtx)
+				}),
 				layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-				layout.Rigid(p.labeledEditor(gtx, th, "Nome do Perfil:*", nameEditor.Layout, "")), // Feedback aqui?
+
+				layout.Rigid(p.labeledInput(gtx, th, "Nome do Perfil:*", nameEditorLayout, "", canEditName)),
 				layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-				layout.Rigid(p.labeledEditor(gtx, th, "Descrição:", descEditor.Layout, "")),
+				layout.Rigid(p.labeledInput(gtx, th, "Descrição:", descEditorLayout, "", canEditDetails)),
 				layout.Rigid(layout.Spacer{Height: theme.LargeVSpacer}.Layout),
 
 				layout.Rigid(material.Subtitle1(th, "Permissões Associadas").Layout),
 				layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-				layout.Flexed(1, func(gtx C) D { // Lista de Permissões com Scroll
-					return p.permList.Layout(gtx, len(prefixes), func(gtx C, groupIndex int) D {
-						prefix := prefixes[groupIndex]
+				// Lista de Permissões com Scroll
+				layout.Flexed(1, func(gtx C) D {
+					// Apenas mostra a lista se um role estiver selecionado/sendo criado.
+					if !canEditDetails && !p.isEditingNewRole && p.selectedRole == nil {
+						return material.Body2(th, "Selecione um perfil para ver ou editar permissões, ou clique em 'Novo Perfil'.").Layout(gtx)
+					}
+
+					return p.permList.Layout(gtx, len(sortedGroupPrefixes), func(gtx C, groupIndex int) D {
+						prefix := sortedGroupPrefixes[groupIndex]
 						permsInGroup := groupedPerms[prefix]
-						sort.Slice(permsInGroup, func(i, j int) bool { return permsInGroup[i] < permsInGroup[j] })
+						// `permsInGroup` já estará ordenado se `p.sortedPermKeys` estava.
 
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-							layout.Rigid(func(gtx C) D {
-								lbl := material.Body2(th, strings.Title(prefix))
-								lbl.Font.Weight = font.Bold
-								return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+							layout.Rigid(func(gtx C) D { // Título do Grupo de Permissão
+								groupLabel := material.Body2(th, strings.Title(prefix)+" Permissões")
+								groupLabel.Font.Weight = font.Bold
+								return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4)}.Layout(gtx, groupLabel.Layout)
 							}),
-							layout.Rigid(func(gtx C) D {
+							layout.Rigid(func(gtx C) D { // Checkboxes para este grupo
 								permGroupLayout := layout.List{Axis: layout.Vertical}
 								return permGroupLayout.Layout(gtx, len(permsInGroup), func(gtx C, permIndex int) D {
 									permKey := permsInGroup[permIndex]
-									permDesc := p.allSystemPerms[permKey]
+									permDesc := p.allSystemPerms[permKey] // Descrição da permissão
 									chk, ok := p.permissionCheckboxes[permKey]
 									if !ok {
 										return D{}
-									}
+									} // Não deveria acontecer.
 
 									cb := material.CheckBox(th, chk, string(permKey))
-									// cb.SetEnabled(canEditDetails)
-									// TODO: Adicionar tooltip com permDesc
-									return layout.Inset{Left: unit.Dp(10), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, cb.Layout)
+									cb.IconColor = theme.Colors.Primary
+									// Desabilitar checkbox se o painel não for editável.
+									// A interatividade é controlada por não processar `chk.Update` se `!canEditDetails`.
+
+									// Adicionar tooltip com a descrição da permissão.
+									// Tooltip em Gio requer um gerenciador de tooltip ou um widget customizado.
+									// Por agora, apenas o nome.
+									return layout.Inset{Left: unit.Dp(10), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, cb.Layout)
 								})
 							}),
 						)
 					})
 				}),
 				layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-				layout.Rigid(func(gtx C) D { // Mensagem de Status e Botões Salvar/Cancelar
-					if p.statusMessage != "" && !p.isLoading {
-						lblStatus := material.Body2(th, p.statusMessage)
-						lblStatus.Color = p.messageColor
-						layout.Inset{Bottom: theme.DefaultVSpacer}.Layout(gtx, lblStatus.Layout)
-					}
+				// Mensagem de Status e Botões Salvar/Cancelar no painel direito
+				layout.Rigid(func(gtx C) D {
+					return layout.Flex{Axis: layout.Vertical, Alignment: layout.End}.Layout(gtx,
+						layout.Rigid(func(gtx C) D { // Mensagem de Status
+							if p.statusMessage != "" && !p.isLoading { // Só mostra se não estiver carregando
+								lblStatus := material.Body2(th, p.statusMessage)
+								lblStatus.Color = p.messageColor
+								return layout.Inset{Bottom: theme.DefaultVSpacer}.Layout(gtx, lblStatus.Layout)
+							}
+							return D{}
+						}),
+						layout.Rigid(func(gtx C) D { // Botões Salvar/Cancelar
+							saveBtnWidget := material.Button(th, &p.saveRoleBtn, "Salvar Alterações")
+							if p.isEditingNewRole {
+								saveBtnWidget.Text = "Criar Novo Perfil"
+							}
 
-					saveBtnWidget := material.Button(th, &p.saveRoleBtn, "Salvar Alterações")
-					if p.isEditingNewRole {
-						saveBtnWidget.Text = "Criar Novo Perfil"
-					}
-					// saveBtnWidget.SetEnabled(canEditDetails && p.formChanged && !p.isLoading)
-					if !(canEditDetails && p.formChanged && !p.isLoading) {
-						saveBtnWidget.Style.뭄Color = theme.Colors.TextMuted
-					}
+							// Habilitar/desabilitar visualmente.
+							shouldEnableSave := canEditDetails && p.formChanged && !p.isLoading
+							if !shouldEnableSave {
+								saveBtnWidget.Style.TextColor = theme.Colors.TextMuted
+								saveBtnWidget.Style.Background = theme.Colors.Grey300
+							} else {
+								saveBtnWidget.Background = theme.Colors.Primary
+							}
 
-					cancelBtnWidget := material.Button(th, &p.cancelChangesBtn, "Cancelar")
-					// cancelBtnWidget.SetEnabled(canEditDetails && !p.isLoading)
-					if !(canEditDetails && !p.isLoading) {
-						cancelBtnWidget.Style.뭄Color = theme.Colors.TextMuted
-					}
+							cancelBtnWidget := material.Button(th, &p.cancelChangesBtn, "Cancelar")
+							shouldEnableCancel := canEditDetails && !p.isLoading
+							if !shouldEnableCancel {
+								cancelBtnWidget.Style.TextColor = theme.Colors.TextMuted
+								cancelBtnWidget.Style.Background = theme.Colors.Grey300
+							}
 
-					return layout.Flex{Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, func(gtx C) D { return layout.Dimensions{} }), // Espaçador
-						layout.Rigid(cancelBtnWidget.Layout),
-						layout.Rigid(layout.Spacer{Width: theme.DefaultVSpacer}.Layout),
-						layout.Rigid(saveBtnWidget.Layout),
+							return layout.Flex{Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
+								layout.Flexed(1, func(gtx C) D { return layout.Dimensions{} }), // Espaçador para alinhar à direita
+								layout.Rigid(cancelBtnWidget.Layout),
+								layout.Rigid(layout.Spacer{Width: theme.DefaultVSpacer}.Layout),
+								layout.Rigid(saveBtnWidget.Layout),
+							)
+						}),
 					)
 				}),
 			)
 		})
 }
 
-// --- Lógica de Ações ---
+// --- Lógica de Ações e Manipulação de Estado ---
+
+// selectRole é chamado quando um role é selecionado na lista do painel esquerdo.
 func (p *RoleManagementPage) selectRole(role *models.RolePublic) {
 	if p.isLoading {
 		return
-	}
-	p.statusMessage = ""
+	} // Impede seleção durante carregamento.
+	p.statusMessage = "" // Limpa mensagem global da página.
 
-	if p.formChanged && p.selectedRole != nil {
-		// TODO: Mostrar diálogo "Descartar alterações não salvas?"
-		// Por agora, apenas loga e continua.
-		appLogger.Warnf("Mudando de role com alterações não salvas no role '%s'", p.selectedRole.Name)
+	if p.formChanged && p.selectedRole != nil && p.selectedRole.ID != role.ID {
+		// Se havia um role selecionado e o formulário tem mudanças não salvas,
+		// poderia-se exibir um diálogo "Descartar alterações não salvas?".
+		// Por agora, apenas loga e prossegue, descartando as mudanças.
+		appLogger.Warnf("Mudando de role (ID: %d para ID: %d) com alterações não salvas no formulário.", p.selectedRole.ID, role.ID)
 	}
 
 	p.selectedRole = role
-	p.isEditingNewRole = false
-	p.formChanged = false // Resetar ao selecionar novo role
+	p.isEditingNewRole = false // Cancela o modo de "novo role" se estiver ativo.
+	p.formChanged = false      // Reseta flag de mudanças ao selecionar um novo role.
 
 	if role != nil {
-		p.roleNameInput.SetText(role.Name)
+		p.roleNameInput.SetText(role.Name) // Nome já é minúsculo do DB.
 		desc := ""
 		if role.Description != nil {
 			desc = *role.Description
 		}
 		p.roleDescriptionInput.SetText(desc)
 
-		// Marcar checkboxes de permissão
+		// Marca os checkboxes de permissão correspondentes ao role selecionado.
 		currentPermsSet := make(map[auth.Permission]bool)
 		for _, pNameStr := range role.Permissions {
 			currentPermsSet[auth.Permission(pNameStr)] = true
@@ -421,73 +528,73 @@ func (p *RoleManagementPage) selectRole(role *models.RolePublic) {
 		}
 		appLogger.Debugf("Role '%s' selecionado. %d permissões carregadas nos checkboxes.", role.Name, len(currentPermsSet))
 	} else {
-		p.clearDetailsPanel(false) // Limpa se role for nil (ex: desseleção)
+		p.clearDetailsPanel(false) // Limpa painel direito se `role` for nil (ex: desseleção).
 	}
 	p.updateButtonStates()
 	p.router.GetAppWindow().Invalidate()
 }
 
-func (p *RoleManagementPage) clearDetailsPanel(resetSelection bool) {
-	if resetSelection {
+// clearDetailsPanel limpa o painel direito (detalhes do role e permissões).
+// `resetListSelection` define se a seleção na lista de roles também deve ser limpa.
+func (p *RoleManagementPage) clearDetailsPanel(resetListSelection bool) {
+	if resetListSelection {
 		p.selectedRole = nil
-		// TODO: Limpar seleção na QListWidget (se Gio List tiver essa noção)
+		// Em Gio, a "desseleção" na lista é visual, não há um estado de widget a ser resetado.
+		// Apenas não desenhar o destaque de seleção é suficiente.
 	}
 	p.isEditingNewRole = false
 	p.formChanged = false
 	p.roleNameInput.SetText("")
 	p.roleDescriptionInput.SetText("")
-	for _, chk := range p.permissionCheckboxes {
+	for _, chk := range p.permissionCheckboxes { // Desmarca todos os checkboxes.
 		chk.Value = false
 	}
-	p.statusMessage = ""
-	p.updateButtonStates()
-	// p.router.GetAppWindow().Invalidate() // Será invalidado pelo chamador ou próximo Layout
+	p.statusMessage = "" // Limpa mensagem global da página.
+	// p.updateButtonStates() // Será chamado pelo chamador ou próximo Layout.
 }
 
+// updateButtonStates atualiza o estado lógico (e visual simulado) dos botões.
+// A interatividade real é controlada no manipulador de cliques.
 func (p *RoleManagementPage) updateButtonStates() {
-	// Botão Excluir
-	canDelete := p.selectedRole != nil && !p.selectedRole.IsSystemRole && !p.isLoading
-	// deleteBtn.SetEnabled(canDelete)
-
-	// Botão Salvar
-	canEditDetails := (p.selectedRole != nil || p.isEditingNewRole) && !p.isLoading
-	canSave := canEditDetails && p.formChanged
-	// saveRoleBtn.SetEnabled(canSave)
-
-	// Botão Cancelar
-	// cancelChangesBtn.SetEnabled(canEditDetails)
-
-	p.router.GetAppWindow().Invalidate() // Para redesenhar os botões com novo estado (visual)
+	// Apenas força um Invalidate para que o Layout redesenhe os botões
+	// com base nas condições atuais (isLoading, selectedRole, formChanged, etc.).
+	p.router.GetAppWindow().Invalidate()
 }
 
+// handleNewRole prepara o painel direito para criar um novo role.
 func (p *RoleManagementPage) handleNewRole() {
 	if p.isLoading {
 		return
 	}
 	if p.formChanged && p.selectedRole != nil {
-		// TODO: Diálogo "Descartar alterações?"
-		appLogger.Warnf("Iniciando novo role com alterações não salvas no role '%s'", p.selectedRole.Name)
+		appLogger.Warnf("Iniciando novo role com alterações não salvas no role '%s'. (Alterações descartadas)", p.selectedRole.Name)
 	}
-	p.clearDetailsPanel(true) // Limpa seleção da lista e painel direito
+	p.clearDetailsPanel(true) // Limpa seleção da lista e painel direito.
 	p.isEditingNewRole = true
-	p.roleNameInput.Focus()
-	p.updateButtonStates()
-	p.statusMessage = "Preencha os dados para o novo perfil."
+	p.formChanged = false   // Novo formulário começa sem mudanças.
+	p.roleNameInput.Focus() // Tenta focar no campo de nome.
+	p.statusMessage = "Preencha os dados para o novo perfil e clique em 'Criar'."
 	p.messageColor = theme.Colors.Info
+	p.updateButtonStates()
 	p.router.GetAppWindow().Invalidate()
 }
 
+// handleSaveRole lida com salvar um role novo ou existente.
 func (p *RoleManagementPage) handleSaveRole() {
-	if p.isLoading {
+	if p.isLoading || !p.formChanged { // Não faz nada se não houver mudanças ou estiver carregando.
+		if !p.formChanged {
+			p.statusMessage = "Nenhuma alteração para salvar."
+			p.messageColor = theme.Colors.Info
+		}
 		return
 	}
-	p.statusMessage = ""
+	p.statusMessage = "" // Limpa mensagem anterior.
 
 	roleName := strings.TrimSpace(p.roleNameInput.Text())
 	roleDescriptionText := strings.TrimSpace(p.roleDescriptionInput.Text())
-	var roleDescription *string
+	var roleDescriptionPtr *string
 	if roleDescriptionText != "" {
-		roleDescription = &roleDescriptionText
+		roleDescriptionPtr = &roleDescriptionText
 	}
 
 	selectedPermNames := []string{}
@@ -497,84 +604,90 @@ func (p *RoleManagementPage) handleSaveRole() {
 		}
 	}
 
-	// Validação básica
+	// Validação do nome do role (formato e obrigatoriedade).
 	if roleName == "" {
 		p.statusMessage = "Nome do perfil é obrigatório."
 		p.messageColor = theme.Colors.Danger
 		p.router.GetAppWindow().Invalidate()
 		return
 	}
+	// Regex para nome do role (ex: `^[a-zA-Z0-9_]{3,50}$`)
 	if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_]{3,50}$`, roleName); !matched {
-		p.statusMessage = "Nome: 3-50 caracteres (letras, números, _)."
+		p.statusMessage = "Nome do perfil deve ter 3-50 caracteres (letras, números, _)."
 		p.messageColor = theme.Colors.Danger
 		p.router.GetAppWindow().Invalidate()
 		return
 	}
+	normalizedRoleName := strings.ToLower(roleName) // Normaliza para minúsculas.
 
 	p.isLoading = true
 	p.statusMessage = "Salvando perfil..."
 	p.messageColor = theme.Colors.TextMuted
 	p.spinner.Start(p.router.GetAppWindow().Context())
+	p.updateButtonStates() // Para desabilitar botões visualmente
 	p.router.GetAppWindow().Invalidate()
 
-	go func(isNew bool, currentRoleID uint64, name, descText string, descPtr *string, perms []string) {
+	currentAdminSession, _ := p.sessionManager.GetCurrentSession() // Para o serviço
+
+	go func(isNew bool, currentRoleID uint64, name, normalizedName, descText string, descPtr *string, perms []string, sess *auth.SessionData) {
 		var opErr error
 		var successMsg string
-		currentAdminSession, _ := p.sessionManager.GetCurrentSession()
+		var resultingRole *models.RolePublic
 
 		if isNew {
-			createData := models.RoleCreate{Name: name, Description: descPtr, PermissionNames: perms}
-			if errVal := createData.CleanAndValidate(); errVal != nil { // Valida e normaliza
-				opErr = errVal
-			} else {
-				newRole, err := p.roleService.CreateRole(createData, currentAdminSession)
-				if err != nil {
-					opErr = err
-				} else {
-					successMsg = fmt.Sprintf("Perfil '%s' criado!", newRole.Name)
+			createData := models.RoleCreate{Name: normalizedName, Description: descPtr, PermissionNames: perms}
+			// CleanAndValidate já foi feito implicitamente pela coleta/trimming,
+			// mas o modelo pode ter validações mais robustas.
+			// if errVal := createData.CleanAndValidate(); errVal != nil { opErr = errVal }
+			if opErr == nil {
+				resultingRole, opErr = s.roleService.CreateRole(createData, sess)
+				if opErr == nil {
+					successMsg = fmt.Sprintf("Perfil '%s' criado com sucesso!", name)
 				}
 			}
-		} else {
+		} else { // Editando role existente
 			updateData := models.RoleUpdate{}
-			changed := false
-			if p.selectedRole.Name != name {
-				updateData.Name = &name
-				changed = true
+			// O serviço `UpdateRole` compara com o estado atual no DB para determinar o que mudou.
+			// Aqui, apenas montamos o payload com o que está no formulário.
+			if p.selectedRole.Name != normalizedName {
+				updateData.Name = &normalizedName
 			}
-			currentDesc := ""
+
+			currentDescInForm := ""
+			if descPtr != nil {
+				currentDescInForm = *descPtr
+			}
+			selectedDescInDB := ""
 			if p.selectedRole.Description != nil {
-				currentDesc = *p.selectedRole.Description
+				selectedDescInDB = *p.selectedRole.Description
 			}
-			if currentDesc != descText {
+			if currentDescInForm != selectedDescInDB {
 				updateData.Description = descPtr
-				changed = true
 			}
 
-			// Compara permissões
-			currentPermsSet := make(map[string]bool)
+			// Compara permissões para ver se mudaram.
+			currentPermsSetDB := make(map[string]bool)
 			for _, pStr := range p.selectedRole.Permissions {
-				currentPermsSet[pStr] = true
+				currentPermsSetDB[pStr] = true
 			}
-			newPermsSet := make(map[string]bool)
+			newPermsSetForm := make(map[string]bool)
 			for _, pStr := range perms {
-				newPermsSet[pStr] = true
-			}
-			if len(currentPermsSet) != len(newPermsSet) || !mapsEqual(currentPermsSet, newPermsSet) {
-				updateData.PermissionNames = &perms
-				changed = true
+				newPermsSetForm[pStr] = true
 			}
 
-			if !changed { // Nada mudou
-				successMsg = fmt.Sprintf("Nenhuma alteração para o perfil '%s'.", name)
+			if len(currentPermsSetDB) != len(newPermsSetForm) || !mapsEqual(currentPermsSetDB, newPermsSetForm) {
+				updateData.PermissionNames = &perms
+			}
+
+			// Se nada mudou efetivamente (apesar de `formChanged` poder estar true por digitação)
+			if updateData.Name == nil && updateData.Description == nil && updateData.PermissionNames == nil {
+				successMsg = fmt.Sprintf("Nenhuma alteração efetiva para o perfil '%s'.", name)
 			} else {
-				if errVal := updateData.CleanAndValidate(); errVal != nil {
-					opErr = errVal
-				} else {
-					updatedRole, err := p.roleService.UpdateRole(currentRoleID, updateData, currentAdminSession)
-					if err != nil {
-						opErr = err
-					} else {
-						successMsg = fmt.Sprintf("Perfil '%s' atualizado!", updatedRole.Name)
+				// if errVal := updateData.CleanAndValidate(); errVal != nil { opErr = errVal }
+				if opErr == nil {
+					resultingRole, opErr = s.roleService.UpdateRole(currentRoleID, updateData, sess)
+					if opErr == nil {
+						successMsg = fmt.Sprintf("Perfil '%s' atualizado com sucesso!", name)
 					}
 				}
 			}
@@ -584,60 +697,77 @@ func (p *RoleManagementPage) handleSaveRole() {
 			p.isLoading = false
 			p.spinner.Stop(p.router.GetAppWindow().Context())
 			if opErr != nil {
-				p.statusMessage = fmt.Sprintf("Erro ao salvar: %v", opErr)
+				p.statusMessage = fmt.Sprintf("Erro ao salvar perfil '%s': %v", name, opErr)
 				p.messageColor = theme.Colors.Danger
 				appLogger.Errorf("Erro ao salvar role '%s': %v", name, opErr)
+				// Manter `formChanged = true` para permitir nova tentativa de salvar.
 			} else {
 				p.statusMessage = successMsg
 				p.messageColor = theme.Colors.Success
-				p.formChanged = false
-				p.isEditingNewRole = false  // Sai do modo de novo role
-				p.loadRolesAndPermissions() // Recarrega lista e seleciona o role (se possível)
-				// TODO: Selecionar o role recém-criado/editado na lista
+				p.formChanged = false      // Reseta flag de mudanças.
+				p.isEditingNewRole = false // Sai do modo de novo role.
+				p.loadRoles(sess)          // Recarrega lista.
+				// Se um novo role foi criado ou um existente editado, tenta selecioná-lo.
+				if resultingRole != nil {
+					p.selectRole(resultingRole) // Seleciona o role (ou mantém o atual se for update sem mudança de ID/nome)
+				} else if !isNew { // Se foi update e não retornou role (ex: nenhuma mudança), tenta manter o selecionado
+					p.selectRole(p.selectedRole)
+				}
 			}
 			p.updateButtonStates()
 			p.router.GetAppWindow().Invalidate()
 		})
-	}(p.isEditingNewRole, p.selectedRole.ID, roleName, roleDescriptionText, roleDescription, selectedPermNames)
+	}(p.isEditingNewRole, p.selectedRole.ID, roleName, normalizedRoleName, roleDescriptionText, roleDescriptionPtr, selectedPermNames, currentAdminSession)
 }
 
+// handleCancelChanges descarta as mudanças no painel direito.
 func (p *RoleManagementPage) handleCancelChanges() {
 	if p.isLoading {
 		return
 	}
 	if p.isEditingNewRole {
-		p.clearDetailsPanel(true) // Limpa tudo, incluindo seleção da lista
+		p.clearDetailsPanel(true) // Limpa tudo, incluindo seleção da lista.
 	} else if p.selectedRole != nil {
-		p.selectRole(p.selectedRole) // Recarrega dados do role selecionado, descartando mudanças
+		// Recarrega os dados do role atualmente selecionado, descartando quaisquer mudanças não salvas.
+		p.selectRole(p.selectedRole)
 	} else {
-		p.clearDetailsPanel(true)
+		p.clearDetailsPanel(true) // Se nada selecionado e não era novo, apenas limpa.
 	}
-	p.formChanged = false
+	p.formChanged = false // Garante que `formChanged` seja resetado.
+	p.statusMessage = "Alterações descartadas."
+	p.messageColor = theme.Colors.Info
 	p.updateButtonStates()
 	p.router.GetAppWindow().Invalidate()
 }
 
+// handleDeleteRole lida com a exclusão de um role selecionado.
 func (p *RoleManagementPage) handleDeleteRole() {
 	if p.isLoading || p.selectedRole == nil || p.selectedRole.IsSystemRole {
 		if p.selectedRole != nil && p.selectedRole.IsSystemRole {
 			p.statusMessage = "Perfis do sistema não podem ser excluídos."
 			p.messageColor = theme.Colors.Warning
+			p.router.GetAppWindow().Invalidate()
 		}
 		return
 	}
 
-	// TODO: Diálogo de confirmação para exclusão
+	// TODO: Implementar um diálogo de confirmação antes de excluir.
+	// Ex: p.router.GetAppWindow().ShowConfirmDialog("Excluir Perfil", "Tem certeza?", func(confirmado bool){ if confirmado { ... }})
 
 	p.isLoading = true
 	p.statusMessage = fmt.Sprintf("Excluindo perfil '%s'...", p.selectedRole.Name)
 	p.messageColor = theme.Colors.TextMuted
 	p.spinner.Start(p.router.GetAppWindow().Context())
+	p.updateButtonStates()
 	p.router.GetAppWindow().Invalidate()
 
-	go func(roleIDToDelete uint64, roleNameToLog string) {
+	roleIDToDelete := p.selectedRole.ID  // Copia o ID.
+	roleNameToLog := p.selectedRole.Name // Copia o nome para log.
+	currentAdminSession, _ := p.sessionManager.GetCurrentSession()
+
+	go func(id uint64, name string, sess *auth.SessionData) {
 		var opErr error
-		currentAdminSession, _ := p.sessionManager.GetCurrentSession()
-		err := p.roleService.DeleteRole(roleIDToDelete, currentAdminSession)
+		err := s.roleService.DeleteRole(id, sess)
 		if err != nil {
 			opErr = err
 		}
@@ -646,18 +776,57 @@ func (p *RoleManagementPage) handleDeleteRole() {
 			p.isLoading = false
 			p.spinner.Stop(p.router.GetAppWindow().Context())
 			if opErr != nil {
-				p.statusMessage = fmt.Sprintf("Erro ao excluir '%s': %v", roleNameToLog, opErr)
+				p.statusMessage = fmt.Sprintf("Erro ao excluir perfil '%s': %v", name, opErr)
 				p.messageColor = theme.Colors.Danger
-				appLogger.Errorf("Erro ao excluir role '%s': %v", roleNameToLog, opErr)
+				appLogger.Errorf("Erro ao excluir role '%s' (ID: %d): %v", name, id, opErr)
+				// Se o erro for porque o role não existe mais (ex: deletado por outra ação),
+				// ErrNotFound será retornado pelo serviço.
 			} else {
-				p.statusMessage = fmt.Sprintf("Perfil '%s' excluído com sucesso!", roleNameToLog)
+				p.statusMessage = fmt.Sprintf("Perfil '%s' excluído com sucesso!", name)
 				p.messageColor = theme.Colors.Success
-				appLogger.Infof("Perfil '%s' excluído.", roleNameToLog)
-				p.clearDetailsPanel(true)
-				p.loadRolesAndPermissions() // Recarrega lista
+				appLogger.Infof("Perfil '%s' (ID: %d) excluído.", name, id)
+				p.clearDetailsPanel(true) // Limpa painel e seleção.
+				p.loadRoles(sess)         // Recarrega lista de roles.
 			}
 			p.updateButtonStates()
 			p.router.GetAppWindow().Invalidate()
 		})
-	}(p.selectedRole.ID, p.selectedRole.Name)
+	}(roleIDToDelete, roleNameToLog, currentAdminSession)
+}
+
+// Helper para o layout de input com label.
+func (p *RoleManagementPage) labeledInput(gtx layout.Context, th *material.Theme, labelText string, inputWidgetLayout layout.Widget, feedbackText string, enabled bool) layout.Dimensions {
+	label := material.Body1(th, labelText)
+	if !enabled {
+		label.Color = theme.Colors.TextMuted
+	}
+	// A interatividade do inputWidgetLayout em si deve ser controlada pelo seu próprio estado
+	// ou por não passar eventos para ele se `!enabled`.
+
+	return layout.Flex{Axis: layout.Vertical, Spacing: layout.Tight}.Layout(gtx,
+		layout.Rigid(label.Layout),
+		layout.Rigid(inputWidgetLayout),
+		layout.Rigid(func(gtx C) D {
+			if feedbackText != "" {
+				feedbackLabel := material.Body2(th, feedbackText)
+				feedbackLabel.Color = theme.Colors.Danger
+				return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, feedbackLabel.Layout)
+			}
+			return layout.Dimensions{}
+		}),
+	)
+}
+
+// mapsEqual (helper para comparar se dois maps string->bool são iguais)
+// Usado para verificar se as permissões realmente mudaram.
+func mapsEqual(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }

@@ -1,32 +1,40 @@
 package models
 
 import (
+	"regexp"
 	"strings"
-	// "github.com/google/uuid" // Para UserID se DBRole tivesse referência direta
-	// "gorm.io/gorm" // Se usando GORM
+
+	// "time" // Descomente se adicionar CreatedAt/UpdatedAt em DBRole
+
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	// "gorm.io/gorm" // Descomentado se GORM for usado diretamente aqui
 )
 
 // DBRole representa a entidade Role (Perfil) no banco de dados.
 type DBRole struct {
-	ID           uint64  `gorm:"primaryKey;autoIncrement"`
-	Name         string  `gorm:"type:varchar(50);uniqueIndex;not null"` // Nome único do role (ex: "admin", "editor")
-	Description  *string `gorm:"type:varchar(255)"`                     // Descrição opcional do role
-	IsSystemRole bool    `gorm:"not null;default:false"`                // Indica se é um role do sistema (não pode ser excluído/renomeado facilmente)
+	ID uint64 `gorm:"primaryKey;autoIncrement"`
 
-	// Relação Muitos-para-Muitos com Permissões.
-	// Em GORM, a tabela de junção 'role_permissions' seria gerenciada.
-	// Se não usar GORM, esta será uma lista de strings de nomes de permissão
-	// que o repositório/serviço preencherá ao buscar um DBRole.
-	Permissions []string `gorm:"-"` // Ignorado pelo GORM para mapeamento direto de coluna,
-	// preenchido programaticamente. Ou, com GORM:
-	// Permissions []*DBPermission `gorm:"many2many:role_permissions;"` // Se DBPermission fosse uma tabela
+	// Nome único do role (ex: "admin", "editor_chefe"), armazenado em minúsculas.
+	Name string `gorm:"type:varchar(50);uniqueIndex;not null"`
 
-	// Relação Muitos-para-Muitos com Usuários (GORM)
-	// Users       []*DBUser `gorm:"many2many:user_roles;"`
+	// Descrição opcional do role.
+	Description *string `gorm:"type:varchar(255)"`
 
-	// CreatedAt e UpdatedAt poderiam ser adicionados se necessário para auditoria dos roles em si.
-	// CreatedAt time.Time `gorm:"not null;default:now()"`
-	// UpdatedAt time.Time `gorm:"not null;default:now()"`
+	// IsSystemRole indica se é um role do sistema (true) ou customizado (false).
+	// Roles do sistema geralmente não podem ser excluídos ou ter o nome alterado.
+	IsSystemRole bool `gorm:"not null;default:false"`
+
+	// Permissions é uma lista de NOMES de permissões associadas a este role.
+	// Este campo é preenchido programaticamente pelo repositório/serviço
+	// a partir da tabela de junção `role_permissions`.
+	// A tag `gorm:"-"` impede que o GORM tente mapear este campo diretamente para uma coluna na tabela `roles`.
+	// Se estivesse usando a funcionalidade `many2many` do GORM com uma struct `DBPermission`,
+	// a tag seria: `gorm:"many2many:role_permissions;"`.
+	Permissions []string `gorm:"-"`
+
+	// Opcional: Campos de auditoria para o próprio role.
+	// CreatedAt time.Time `gorm:"not null;autoCreateTime"`
+	// UpdatedAt time.Time `gorm:"not null;autoUpdateTime"`
 }
 
 // TableName especifica o nome da tabela para GORM.
@@ -34,13 +42,18 @@ func (DBRole) TableName() string {
 	return "roles"
 }
 
-// DBRolePermission representa a tabela de junção 'role_permissions'.
-// Necessário se não estiver usando a mágica many2many do GORM
-// e precisar manipular a tabela de junção diretamente.
+// DBRolePermission representa a tabela de junção `role_permissions`.
+// Esta struct é usada pelo GORM para gerenciar a relação muitos-para-muitos
+// entre roles e permissões, se você não estiver usando a associação implícita do GORM.
+// Se o GORM gerencia a tabela de junção implicitamente através de `many2many`,
+// esta struct pode não ser explicitamente necessária no código do modelo,
+// mas o GORM a criará no banco.
 type DBRolePermission struct {
-	RoleID         uint64 `gorm:"primaryKey"`
-	PermissionName string `gorm:"type:varchar(100);primaryKey"` // Nome da permissão (ex: "network:create")
-	// Role           DBRole `gorm:"foreignKey:RoleID"` // Opcional para GORM
+	RoleID uint64 `gorm:"primaryKey"` // Chave estrangeira para DBRole.ID
+
+	// PermissionName é o nome da permissão (ex: "network:create").
+	// Parte da chave primária composta com RoleID.
+	PermissionName string `gorm:"type:varchar(100);primaryKey"`
 }
 
 // TableName para a tabela de junção.
@@ -48,13 +61,11 @@ func (DBRolePermission) TableName() string {
 	return "role_permissions"
 }
 
-// DBUserRole representa a tabela de junção 'user_roles'.
-// Necessário se não estiver usando a mágica many2many do GORM.
+// DBUserRole representa a tabela de junção `user_roles`.
+// Usada para a relação muitos-para-muitos entre usuários e roles.
 type DBUserRole struct {
-	UserID string `gorm:"type:uuid;primaryKey"` // Ou uuid.UUID se User.ID for uuid.UUID
-	RoleID uint64 `gorm:"primaryKey"`
-	// User   DBUser `gorm:"foreignKey:UserID"` // Opcional para GORM
-	// Role   DBRole `gorm:"foreignKey:RoleID"` // Opcional para GORM
+	UserID string `gorm:"type:uuid;primaryKey"` // Chave estrangeira para DBUser.ID
+	RoleID uint64 `gorm:"primaryKey"`           // Chave estrangeira para DBRole.ID
 }
 
 // TableName para a tabela de junção.
@@ -64,119 +75,133 @@ func (DBUserRole) TableName() string {
 
 // --- Structs para Transferência de Dados e Validação ---
 
-// RoleBase contém campos comuns.
-type RoleBase struct {
-	Name        string  `json:"name"`
-	Description *string `json:"description,omitempty"`
-}
-
 // RoleCreate é usado para criar um novo role.
 type RoleCreate struct {
-	Name            string   `json:"name" validate:"required,min=3,max=50,rolename_custom"` // rolename_custom para regex ^[a-zA-Z0-9_]+$
-	Description     *string  `json:"description,omitempty" validate:"omitempty,max=255"`
-	PermissionNames []string `json:"permission_names"` // Lista de NOMES de permissões a serem associadas
+	// `validate:"required,min=3,max=50,rolename_format"` sugere validação customizada.
+	Name string `json:"name" validate:"required,min=3,max=50,rolename_format"`
+
+	// `validate:"omitempty,max=255"` significa opcional, mas se presente, máximo de 255 caracteres.
+	Description *string `json:"description,omitempty" validate:"omitempty,max=255"`
+
+	// PermissionNames é uma lista de NOMES de permissões a serem associadas ao novo role.
+	// `validate:"omitempty,dive,min=1"` significa que a lista pode ser vazia, mas se
+	// elementos estiverem presentes (dive), cada um deve ter pelo menos 1 caractere.
+	// A validação de que os nomes de permissão existem de fato no sistema é feita pelo serviço.
+	PermissionNames []string `json:"permission_names" validate:"omitempty,dive,min=1"`
 }
 
+var roleNameValidationRegex = regexp.MustCompile(`^[a-zA-Z0-9_]{3,50}$`)
+
 // CleanAndValidate normaliza e valida os campos de RoleCreate.
-// O serviço chamaria este método. Nome do role é convertido para minúsculas.
+// O serviço deve chamar este método. O nome do role é convertido para minúsculas.
 func (rc *RoleCreate) CleanAndValidate() error {
+	// Normalizar e validar Nome
 	cleanedName := strings.TrimSpace(rc.Name)
 	if cleanedName == "" {
-		return NewValidationError("Nome do role é obrigatório.", map[string]string{"name": "Nome é obrigatório"})
+		return appErrors.NewValidationError("Nome do role é obrigatório.", map[string]string{"name": "obrigatório"})
 	}
-	// TODO: Chamar validador customizado para nome do role (ex: regex ^[a-zA-Z0-9_]+$)
-	// if !validators.IsValidRoleName(cleanedName) {
-	//  return NewValidationError("Nome do role inválido (use letras, números, _).", map[string]string{"name": "Formato inválido"})
-	// }
-	rc.Name = strings.ToLower(cleanedName)
+	if !roleNameValidationRegex.MatchString(cleanedName) {
+		return appErrors.NewValidationError(
+			"Nome do role deve ter entre 3 e 50 caracteres e conter apenas letras (a-z, A-Z), números (0-9) ou underscore (_).",
+			map[string]string{"name": "formato inválido"},
+		)
+	}
+	rc.Name = strings.ToLower(cleanedName) // Padroniza para minúsculas
 
+	// Normalizar Descrição
 	if rc.Description != nil {
 		*rc.Description = strings.TrimSpace(*rc.Description)
 		if len(*rc.Description) > 255 {
-			return NewValidationError("Descrição excede 255 caracteres.", map[string]string{"description": "Descrição muito longa"})
+			return appErrors.NewValidationError("Descrição do role excede 255 caracteres.", map[string]string{"description": "muito longa"})
 		}
-		if *rc.Description == "" { // Se ficou vazia após trim, torna nil
+		if *rc.Description == "" { // Se ficou vazia após trim, torna nil para consistência.
 			rc.Description = nil
 		}
 	}
 
-	// Validação dos nomes das permissões (se eles existem no sistema)
-	// geralmente é feita pelo RoleService, que tem acesso ao PermissionManager.
-	// Aqui, podemos apenas garantir que não são strings vazias.
+	// Normalizar Nomes de Permissões (remover espaços e vazios)
 	validPermNames := []string{}
-	for _, pName := range rc.PermissionNames {
-		pTrimmed := strings.TrimSpace(pName)
-		if pTrimmed != "" {
-			validPermNames = append(validPermNames, pTrimmed)
+	if rc.PermissionNames != nil {
+		for _, pName := range rc.PermissionNames {
+			pTrimmed := strings.TrimSpace(pName)
+			if pTrimmed != "" {
+				validPermNames = append(validPermNames, pTrimmed) // A validação de existência é no serviço.
+			}
 		}
 	}
-	rc.PermissionNames = validPermNames
+	rc.PermissionNames = validPermNames // Pode ser uma lista vazia se todas forem inválidas/vazias.
 
 	return nil
 }
 
 // RoleUpdate é usado para atualizar um role existente.
+// Ponteiros indicam campos opcionais para atualização.
 type RoleUpdate struct {
-	Name        *string `json:"name,omitempty" validate:"omitempty,min=3,max=50,rolename_custom"`
+	Name        *string `json:"name,omitempty" validate:"omitempty,min=3,max=50,rolename_format"`
 	Description *string `json:"description,omitempty" validate:"omitempty,max=255"`
-	// PermissionNames: Se fornecido, substitui TODAS as permissões existentes do role.
-	// Se nil, as permissões não são alteradas por este payload (mas podem ser por outro método).
-	PermissionNames *[]string `json:"permission_names,omitempty"`
+
+	// PermissionNames: Se fornecido (não nil), substitui TODAS as permissões existentes do role.
+	// Se for um slice vazio `[]string{}`, remove todas as permissões.
+	// Se for `nil`, as permissões não são alteradas por este payload.
+	PermissionNames *[]string `json:"permission_names,omitempty" validate:"omitempty,dive,min=1"`
 }
 
-// CleanAndValidate para RoleUpdate.
+// CleanAndValidate normaliza e valida os campos de RoleUpdate que foram fornecidos.
 func (ru *RoleUpdate) CleanAndValidate() error {
 	if ru.Name != nil {
 		cleanedName := strings.TrimSpace(*ru.Name)
 		if cleanedName == "" {
-			return NewValidationError("Nome do role não pode ser vazio se fornecido para atualização.", map[string]string{"name": "Nome não pode ser vazio"})
+			return appErrors.NewValidationError("Nome do role não pode ser vazio se fornecido para atualização.", map[string]string{"name": "não pode ser vazio"})
 		}
-		// TODO: Chamar validador customizado
-		// if !validators.IsValidRoleName(cleanedName) {
-		//  return NewValidationError("Nome do role inválido.", map[string]string{"name": "Formato inválido"})
-		// }
+		if !roleNameValidationRegex.MatchString(cleanedName) {
+			return appErrors.NewValidationError(
+				"Nome do role deve ter entre 3 e 50 caracteres e conter apenas letras, números ou underscore.",
+				map[string]string{"name": "formato inválido"},
+			)
+		}
 		*ru.Name = strings.ToLower(cleanedName)
 	}
+
 	if ru.Description != nil {
 		*ru.Description = strings.TrimSpace(*ru.Description)
 		if len(*ru.Description) > 255 {
-			return NewValidationError("Descrição excede 255 caracteres.", map[string]string{"description": "Descrição muito longa"})
+			return appErrors.NewValidationError("Descrição do role excede 255 caracteres.", map[string]string{"description": "muito longa"})
 		}
 		if *ru.Description == "" {
 			ru.Description = nil
 		}
 	}
-	if ru.PermissionNames != nil {
+
+	if ru.PermissionNames != nil { // Se o ponteiro para o slice não for nil
 		validPermNames := []string{}
-		for _, pName := range *ru.PermissionNames {
+		for _, pName := range *ru.PermissionNames { // Desreferencia o slice
 			pTrimmed := strings.TrimSpace(pName)
 			if pTrimmed != "" {
 				validPermNames = append(validPermNames, pTrimmed)
 			}
 		}
-		*ru.PermissionNames = validPermNames
+		*ru.PermissionNames = validPermNames // Atualiza o slice desreferenciado
 	}
 	return nil
 }
 
-// RolePublic representa os dados de um role para a UI ou API, incluindo suas permissões.
-// Espelha o RoleInDB do Python.
+// RolePublic representa os dados de um role para a UI ou API (DTO), incluindo suas permissões.
 type RolePublic struct {
 	ID           uint64   `json:"id"`
 	Name         string   `json:"name"`
 	Description  *string  `json:"description,omitempty"`
 	IsSystemRole bool     `json:"is_system_role"`
-	Permissions  []string `json:"permissions"` // Lista de nomes de permissões
+	Permissions  []string `json:"permissions"` // Lista de nomes de permissões.
 }
 
-// ToRolePublic converte um DBRole para RolePublic.
-// As permissões devem ser preenchidas externamente pelo serviço/repositório.
+// ToRolePublic converte um DBRole (modelo do banco) para RolePublic (DTO).
+// O campo `DBRole.Permissions` já deve estar preenchido pelo repositório.
 func ToRolePublic(dbRole *DBRole) *RolePublic {
 	if dbRole == nil {
 		return nil
 	}
-	// dbRole.Permissions já deve ser um slice de strings preenchido
-	// pelo repositório ao buscar o DBRole.
+
+	// Garante que `Permissions` seja um slice vazio, não nil, se não houver permissões.
 	permissions := []string{}
 	if dbRole.Permissions != nil {
 		permissions = dbRole.Permissions

@@ -4,34 +4,27 @@ import (
 	"log"
 	"os"
 
-	"gioui.org/app"         // Para criar e gerenciar a janela da aplicação.
-	"gioui.org/font/gofont" // Registra uma coleção de fontes Go padrão.
+	"gioui.org/app"
+	"gioui.org/font/gofont"
+	"gioui.org/widget/material"
 
-	// "gioui.org/io/system"   // Para eventos do sistema, como o fechamento da janela.
-	// "gioui.org/layout"      // Para organizar widgets.
-	// "gioui.org/op"          // Para operações de desenho de baixo nível.
-	"gioui.org/widget/material" // Um tema de widgets Material Design.
-
-	// Imports internos do seu projeto
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"                  // Exemplo de import de pacote de autenticação
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"                  // Para configurações
-	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger" // Alias para o seu logger customizado
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data"                  // Para configuração do banco de dados
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"              // Para os serviços da aplicação
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"                    // Para a UI principal e o router
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/repositories"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 )
 
 func main() {
-	// Garante que a função run() seja chamada na thread principal do OS,
-	// o que é necessário para muitas bibliotecas de GUI.
-	// A função eventLoop() então gerencia o loop de eventos da UI.
 	go run()
 	app.Main()
 }
 
 func run() {
 	// --- 1. Carregar Configurações ---
-	cfg, err := core.LoadConfig(".env") // Assume .env na raiz do projeto Go
+	cfg, err := core.LoadConfig(".env")
 	if err != nil {
 		log.Fatalf("Erro CRÍTICO ao carregar configuração: %v", err)
 	}
@@ -46,12 +39,13 @@ func run() {
 	appLogger.Info("=====================================================")
 
 	// --- 3. Inicializar Banco de Dados ---
+	// InitializeDB retorna *gorm.DB
 	db, err := data.InitializeDB(cfg)
 	if err != nil {
 		appLogger.Fatalf("Erro CRÍTICO ao inicializar banco de dados: %v", err)
 	}
 	defer func() {
-		if err := data.CloseDB(db); err != nil { // Supondo uma função CloseDB
+		if err := data.CloseDB(db); err != nil {
 			appLogger.Errorf("Erro ao fechar conexão com banco de dados: %v", err)
 		} else {
 			appLogger.Info("Conexão com banco de dados fechada.")
@@ -59,54 +53,86 @@ func run() {
 	}()
 	appLogger.Info("Banco de dados inicializado com sucesso.")
 
-	// --- (Opcional) Criar/Migrar Tabelas ---
-	// Chame isso apenas se você quiser criar tabelas na inicialização.
-	// Em produção, migrações são geralmente feitas separadamente.
-	// data.CreateDatabaseTables(db) // Supondo que esta função exista e use o 'db' inicializado
+	// --- 4. Inicializar Repositórios e PermissionManager Global ---
+	// RoleRepository é necessário para o PermissionManager e RoleService
+	roleRepo := repositories.NewGormRoleRepository(db)
 
-	// --- 4. Inicializar Serviços ---
-	// Os serviços precisam da conexão com o banco (ou da sessão/tx factory) e do logger.
-	auditLogService := services.NewAuditLogService(db) // Baseado no seu log_service.py
+	// Inicializar PermissionManager Global (deve ser feito antes dos serviços que dependem dele)
+	auth.InitGlobalPermissionManager(roleRepo)
+	permManager := auth.GetPermissionManager() // Obter a instância global
 
-	// EmailService (pode falhar graciosamente se a config não estiver completa)
-	var emailService *services.EmailService
-	if cfg.EmailSMTPServer != "" && cfg.EmailUser != "" { // Checagem mínima
-		es, err := services.NewEmailService(cfg)
-		if err != nil {
-			appLogger.Warnf("Falha ao inicializar EmailService: %v. Funcionalidades de email estarão desabilitadas.", err)
+	// Seed de Roles e Permissões Iniciais (após o PermissionManager estar pronto)
+	if err := auth.SeedInitialRolesAndPermissions(roleRepo, permManager); err != nil {
+		appLogger.Fatalf("Erro CRÍTICO ao semear roles e permissões iniciais: %v", err)
+	}
+
+	// --- 5. Inicializar Serviços ---
+
+	// EmailService (pode falhar graciosamente)
+	var emailService services.EmailService // Declarado como interface
+	if cfg.EmailSMTPServer != "" && cfg.EmailUser != "" {
+		esInstance, errMail := services.NewEmailService(cfg)
+		if errMail != nil {
+			appLogger.Warnf("Falha ao inicializar EmailService: %v. Funcionalidades de email estarão desabilitadas.", errMail)
 		} else {
-			emailService = es
+			emailService = esInstance
 			appLogger.Info("EmailService inicializado.")
 		}
 	} else {
 		appLogger.Info("Configuração de Email incompleta. EmailService não será inicializado.")
 	}
 
-	// SessionManager (precisa do config para timeouts, etc.)
-	sessionManager := auth.NewSessionManager(cfg, db, auditLogService)
-	sessionManager.StartCleanupGoroutine() // Inicia a limpeza de sessões em background
-	defer sessionManager.Shutdown()        // Garante que as sessões sejam salvas ao sair
+	// AuditLogRepository
+	auditLogRepo := repositories.NewGormAuditLogRepository(db)
 
-	// Authenticator (precisa do config para tentativas de login, etc., e SessionManager)
+	// SessionManager
+	// NewSessionManager foi ajustado para não exigir AuditLogService na construção para evitar ciclo.
+	// Se SessionManager precisar logar, ele pode usar appLogger ou ter o AuditLogService injetado depois.
+	// O construtor do SessionManager aceita `db interface{}` e `auditLogService services.AuditLogService`.
+	// Passando nil para auditLogService se não for usado na construção ou se a assinatura permitir.
+	// A assinatura em session.go é: NewSessionManager(cfg *core.Config, db interface{}, auditLogService services.AuditLogService)
+	// Vamos passar nil para auditLogService para sessionManager e criar AuditLogService depois.
+	// A implementação atual do SessionManager armazena o auditLogService mas não o usa ativamente.
+	// Para AuditLogService precisar do SessionManager:
+	sessionManager := auth.NewSessionManager(cfg, db, nil) // Passando nil para AuditLogService
+
+	// AuditLogService (agora pode receber o SessionManager)
+	auditLogService := services.NewAuditLogService(auditLogRepo, sessionManager)
+
+	// Se SessionManager realmente precisasse do AuditLogService, você poderia injetá-lo agora:
+	// sessionManager.SetAuditLogService(auditLogService) // (se tal método existisse)
+	// Ou, o SessionManager usa o appLogger global para seus próprios logs internos.
+
+	sessionManager.StartCleanupGoroutine()
+	defer sessionManager.Shutdown()
+
+	// Authenticator
+	// NewAuthenticator precisa ser capaz de lidar com *gorm.DB ou seu UserRepository interno precisa ser GORM-compatível.
+	// Assumindo que NewAuthenticator foi ajustado para instanciar NewGormUserRepository(db)
 	authenticator := auth.NewAuthenticator(cfg, db, sessionManager, auditLogService)
 
-	// Outros serviços
-	// Nota: os repositórios são geralmente instanciados DENTRO dos serviços.
+	// Outros Repositórios
+	userRepo := repositories.NewGormUserRepository(db)
+	networkRepo := repositories.NewGormNetworkRepository(db)
+	cnpjRepo := repositories.NewGormCNPJRepository(db)
+	importMetadataRepo := repositories.NewGormImportMetadataRepository(db)
+	tituloDireitoRepo := repositories.NewGormTituloDireitoRepository(db)
+	tituloObrigacaoRepo := repositories.NewGormTituloObrigacaoRepository(db)
+
+	// Outros Serviços (agora passando os repositórios e o permManager global)
 	userService := services.NewUserService(db, auditLogService, emailService, cfg, authenticator, sessionManager)
-	roleService := services.NewRoleService(db, auditLogService)
-	networkService := services.NewNetworkService(db, auditLogService)
-	cnpjService := services.NewCNPJService(db, auditLogService)
-	importService := services.NewImportService(db, auditLogService, cfg)
+	roleService := services.NewRoleService(roleRepo, auditLogService, permManager)
+	networkService := services.NewNetworkService(networkRepo, auditLogService, permManager)
+	cnpjService := services.NewCNPJService(cnpjRepo, networkRepo, auditLogService, permManager)
+	importService := services.NewImportService(cfg, auditLogService, permManager, importMetadataRepo, tituloDireitoRepo, tituloObrigacaoRepo)
 
 	appLogger.Info("Todos os serviços foram inicializados.")
 
-	// --- 5. Inicializar Tema e UI ---
-	gofont.Register() // Registra a coleção de fontes Go padrão.
-	// `th` será compartilhado entre a janela principal e todas as suas "páginas".
-	th := material.NewTheme() // Você pode customizar o tema mais tarde em `internal/ui/theme/theme.go`
+	// --- 6. Inicializar Tema e UI ---
+	gofont.Register()
+	th := material.NewTheme() // Pode ser customizado em internal/ui/theme/theme.go
 
 	// Cria a instância da Janela Principal da Aplicação
-	// Passa todas as dependências necessárias para a AppWindow, que então as passará para o Router e Páginas.
 	appWindow := ui.NewAppWindow(
 		th,
 		cfg,
@@ -118,19 +144,16 @@ func run() {
 		cnpjService,
 		importService,
 		auditLogService,
-		// Adicione outros serviços conforme necessário
 	)
 
 	appLogger.Info("Interface do usuário (AppWindow) pronta para iniciar.")
 
-	// --- 6. Iniciar o Loop de Eventos da UI ---
-	// A função Run da AppWindow conterá o loop de eventos do Gio.
-	// Esta função bloqueará até que a janela seja fechada.
+	// --- 7. Iniciar o Loop de Eventos da UI ---
 	if err := appWindow.Run(); err != nil {
 		appLogger.Fatalf("Erro ao executar a janela da aplicação: %v", err)
-		os.Exit(1) // Garante que a aplicação saia em caso de erro fatal na UI.
+		os.Exit(1)
 	}
 
 	appLogger.Info("Aplicação encerrada normalmente.")
-	os.Exit(0) // Saída limpa
+	os.Exit(0)
 }

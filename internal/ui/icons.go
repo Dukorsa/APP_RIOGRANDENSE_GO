@@ -1,239 +1,247 @@
-package icons
+package ui // Alterado de `package icons` para `package ui` para melhor organização se for parte do pacote ui
 
 import (
-	"bytes"
-	"embed"
+	// "bytes"    // Não usado diretamente neste exemplo simplificado com Material Icons
+	// "embed"    // Usado se embutir arquivos de ícone (PNG/SVG)
 	"fmt"
 	"image"
-	"image/color"
-	_ "image/png" // Para decodificar PNGs embutidos
-	"path/filepath"
+	"image/color" // Para `color.NRGBA`
 
-	// _ "image/svg" // Go padrão não decodifica SVG. Precisaria de lib externa.
-
-	"gioui.org/f32"
 	"gioui.org/layout"
-	"gioui.org/op"
-	"gioui.org/op/paint"
 	"gioui.org/unit"
-	"gioui.org/widget" // Para widget.Icon (Material Icons)
+	"gioui.org/widget"          // Para widget.Icon
+	"gioui.org/widget/material" // Para material.Theme e material.Icon
 
-	// Para ícones Material Design padrão do Gio
-	// Você precisará encontrar os equivalentes ou os mais próximos.
-	// Os nomes aqui são exemplos e podem não existir.
-	"golang.org/x/exp/shiny/materialdesign/icons"
+	// Pacote de ícones Material Design fornecido pelo Gio (ou um similar).
+	// O caminho `golang.org/x/exp/shiny/materialdesign/icons` está obsoleto.
+	// É preciso usar um fork ou uma alternativa. Para este exemplo, vamos manter
+	// a referência, mas em um projeto real, isso precisaria ser atualizado.
+	// Alternativas:
+	// - Usar um fork como "github.com/gioui/gio-exp/shiny/materialdesign/icons"
+	// - Embutir seus próprios SVGs e renderizá-los.
+	// - Usar uma biblioteca de ícones SVG para Gio.
+	// Por agora, vamos assumir que `icons` refere-se a um pacote válido.
+	"golang.org/x/exp/shiny/materialdesign/icons" // ATENÇÃO: Pacote obsoleto.
 
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme" // Para cores do tema, se necessário
 )
 
-//go:embed assets_img_icons_png/*.png
-var embeddedIconsFS embed.FS
+// ATENÇÃO: O pacote `golang.org/x/exp/shiny/materialdesign/icons` não é mais mantido
+// e pode ter sido removido de dependências recentes do Go.
+// Considere usar uma fonte alternativa de ícones Material Design ou embutir seus próprios SVGs.
+// Para fins de compilação deste exemplo, os nomes de constantes de `icons` são mantidos.
 
-const embeddedIconsDir = "assets_img_icons_png" // Supondo que você coloque PNGs aqui
-
-// IconType define os tipos de ícones usados na aplicação,
-// similar ao IconType Enum do Python.
+// IconType define os tipos de ícones usados na aplicação.
+// Mapeia para os ícones do Material Design ou para ícones customizados.
 type IconType int
 
 const (
-	IconNone IconType = iota // Para casos onde nenhum ícone é necessário
+	IconNone IconType = iota // Para casos onde nenhum ícone é necessário ou como fallback.
+
+	// Ações Comuns
 	IconSearch
-	IconWindow
-	IconRegister
-	IconExcel
-	IconPDF
-	IconDelete
-	IconEdit
-	IconLogo // Logo pode ser uma imagem maior, tratada separadamente
-	IconLog
-	IconEye
-	IconEyeOff
-	IconComboBox // Geralmente um triângulo para baixo
 	IconAdd
-	IconUser
-	IconNetwork
-	IconCNPJ
-	IconLock
+	IconEdit
+	IconDelete
 	IconRefresh
-	IconExport
-	IconSettings
-	IconEmail
-	IconArrowDropDown // Exemplo de ícone comum
-	IconArrowDropUp
 	IconClose
+	IconSettings
+	IconLogout // Adicionado para logout
+
+	// Visibilidade e Estado
+	IconVisibility
+	IconVisibilityOff
+	IconCheck // Adicionado para sucesso/selecionado
 	IconWarning
-	IconInfo
 	IconError
-	// Adicione outros tipos conforme necessário
+	IconInfo
+
+	// Navegação e UI
+	IconArrowDropDown
+	IconArrowDropUp
+	IconWindowMinimize // Exemplo de ícone de janela (pode não existir)
+	IconMenu           // Ícone de menu Hamburguer
+
+	// Entidades e Funções Específicas
+	IconUser         // Usuário, perfil
+	IconGroup        // Grupo de usuários, roles
+	IconLock         // Senha, bloqueio, segurança
+	IconUnlock       // Desbloqueio
+	IconCNPJ         // Genérico para documento/empresa se não houver específico
+	IconNetwork      // Redes, conexões
+	IconFileUpload   // Para importação de arquivos
+	IconFileDownload // Para exportação de dados
+	IconExcelFile    // Específico para Excel (pode ser genérico de arquivo)
+	IconPDFFile      // Específico para PDF
+	IconAuditLog     // Para logs de auditoria
+	IconRegistration // Para cadastro/registro
+	IconEmail        // Para funcionalidade de e-mail
+
+	// Logo (geralmente tratado como imagem, não ícone vetorial)
+	// IconLogo // Comentado pois logos são geralmente imagens rasterizadas ou SVGs complexos.
 )
 
-// iconCache armazena ícones já carregados/processados.
-// Para widget.Icon (Material), não há muito o que cachear além do ponteiro.
-// Para paint.ImageOp (PNG/SVG), o cache é mais útil.
-var (
-	iconCacheMaterial = make(map[IconType]*widget.Icon)
-	iconCacheImageOp  = make(map[IconType]paint.ImageOp)
-	// TODO: Adicionar um lock (sync.Mutex) se for preencher o cache de forma concorrente,
-	// mas para UI geralmente é na thread principal.
-)
+// iconCacheMaterial armazena instâncias de `*widget.Icon` já criadas para reutilização.
+// Isso evita a recriação desnecessária do widget de ícone.
+var iconCacheMaterial = make(map[IconType]*widget.Icon)
 
-// GetMaterialIcon retorna um *widget.Icon para o IconType especificado.
-// Tenta mapear para os ícones Material Design disponíveis em 'golang.org/x/exp/shiny/materialdesign/icons'.
-// Você precisará encontrar os equivalentes mais próximos.
+// GetMaterialIcon retorna um `*widget.Icon` para o `IconType` especificado.
+// Tenta mapear para os ícones Material Design disponíveis no pacote `icons`.
+// Retorna um ícone de fallback (ajuda/erro) se o ícone solicitado não for encontrado ou houver erro.
 func GetMaterialIcon(iconType IconType) (*widget.Icon, error) {
-	if icon, ok := iconCacheMaterial[iconType]; ok {
+	if icon, ok := iconCacheMaterial[iconType]; ok && icon != nil {
 		return icon, nil
 	}
 
-	var data []byte
+	var iconData []byte // Dados SVG/vetoriais do ícone.
 	var err error
 
 	switch iconType {
+	// Ações Comuns
 	case IconSearch:
-		data = icons.ActionSearch // Exemplo, nome real pode variar
-	case IconWindow: // Pode não ter um direto, usar um genérico
-		data = icons.ActionViewModule // Ou similar
-	case IconRegister:
-		data = icons.ContentCreate // Ou ActionAssignmentInd
-	case IconExcel: // Não há ícone de Excel direto, usar um genérico para "arquivo" ou "planilha"
-		data = icons.FileFolder // Ou EditorInsertDriveFile
-	case IconPDF:
-		data = icons.ImagePictureAsPdf
-	case IconDelete:
-		data = icons.ActionDelete
-	case IconEdit:
-		data = icons.ImageEdit
-	case IconLog:
-		data = icons.ActionList // Ou ActionReceipt
-	case IconEye:
-		data = icons.ActionVisibility
-	case IconEyeOff:
-		data = icons.ActionVisibilityOff
-	case IconComboBox: // Ícone de dropdown
-		data = icons.NavigationArrowDropDown
+		iconData = icons.ActionSearch
 	case IconAdd:
-		data = icons.ContentAdd
-	case IconUser:
-		data = icons.SocialPerson
-	case IconNetwork:
-		data = icons.DeviceNetworkWifi // Ou ActionSettingsInputComponent, ContentLink
-	case IconCNPJ: // Sem ícone específico, usar um genérico de "documento" ou "negócio"
-		data = icons.ActionWork // Ou ActionDescription
-	case IconLock:
-		data = icons.ActionLock
+		iconData = icons.ContentAdd
+	case IconEdit:
+		iconData = icons.ImageEdit // Ou icons.ContentCreate para "criar/editar"
+	case IconDelete:
+		iconData = icons.ActionDelete
 	case IconRefresh:
-		data = icons.NavigationRefresh
-	case IconExport:
-		data = icons.FileFileUpload // Ou ContentSend
-	case IconSettings:
-		data = icons.ActionSettings
-	case IconEmail:
-		data = icons.CommunicationEmail
-	case IconArrowDropDown:
-		data = icons.NavigationArrowDropDown
-	case IconArrowDropUp:
-		data = icons.NavigationArrowDropUp
+		iconData = icons.NavigationRefresh
 	case IconClose:
-		data = icons.NavigationClose
+		iconData = icons.NavigationClose
+	case IconSettings:
+		iconData = icons.ActionSettings
+	case IconLogout:
+		iconData = icons.ActionExitToApp // Ícone de sair/logout
+
+	// Visibilidade e Estado
+	case IconVisibility:
+		iconData = icons.ActionVisibility
+	case IconVisibilityOff:
+		iconData = icons.ActionVisibilityOff
+	case IconCheck:
+		iconData = icons.NavigationCheck // Para sucesso ou seleção
 	case IconWarning:
-		data = icons.AlertWarning
-	case IconInfo:
-		data = icons.ActionInfo
+		iconData = icons.AlertWarning
 	case IconError:
-		data = icons.AlertError
-	case IconLogo: // Logo geralmente é uma imagem customizada, não um widget.Icon
-		appLogger.Warn("GetMaterialIcon chamado para IconLogo. Logos devem ser tratados como ImageOp.")
-		return nil, fmt.Errorf("IconLogo não é um ícone material padrão")
+		iconData = icons.AlertError
+	case IconInfo:
+		iconData = icons.ActionInfo
+
+	// Navegação e UI
+	case IconArrowDropDown:
+		iconData = icons.NavigationArrowDropDown
+	case IconArrowDropUp:
+		iconData = icons.NavigationArrowDropUp
+	case IconWindowMinimize:
+		iconData = icons.NavigationRemove // Subtrair/Minimizar
+	case IconMenu:
+		iconData = icons.NavigationMenu
+
+	// Entidades e Funções Específicas
+	case IconUser:
+		iconData = icons.SocialPerson
+	case IconGroup:
+		iconData = icons.SocialGroup // Para roles/grupos de usuários
+	case IconLock:
+		iconData = icons.ActionLockOutline // Ou ActionLock para preenchido
+	case IconUnlock:
+		iconData = icons.ActionLockOpen
+	case IconCNPJ:
+		iconData = icons.ActionAssignment // Genérico para documento/CNPJ
+	case IconNetwork:
+		iconData = icons.DeviceNetworkCell // Ou icons.ActionSettingsInputComponent
+	case IconFileUpload:
+		iconData = icons.FileFileUpload
+	case IconFileDownload:
+		iconData = icons.FileFileDownload
+	case IconExcelFile:
+		iconData = icons.EditorInsertDriveFile // Genérico para arquivo
+	case IconPDFFile:
+		iconData = icons.ImagePictureAsPdf
+	case IconAuditLog:
+		iconData = icons.ActionReceipt // Para logs/registros
+	case IconRegistration:
+		iconData = icons.ActionAssignmentInd // Ícone de identidade/registro
+	case IconEmail:
+		iconData = icons.CommunicationEmail
+
+	case IconNone: // Nenhum ícone
+		return nil, nil // Retorna nil para indicar que nenhum ícone deve ser desenhado.
 	default:
-		appLogger.Warnf("Ícone material não mapeado para IconType: %d. Usando fallback (ActionHelp).", iconType)
-		data = icons.ActionHelp // Um ícone de fallback
+		appLogger.Warnf("Ícone material não mapeado para IconType: %d. Usando ícone de ajuda como fallback.", iconType)
+		iconData = icons.ActionHelp // Ícone de fallback genérico.
 	}
 
-	if data == nil { // Se o switch não encontrar um ícone (ex: nome errado)
-		appLogger.Warnf("Dados do ícone material não encontrados para IconType: %d. Usando fallback (ActionHelp).", iconType)
-		data = icons.ActionHelp
-	}
-
-	icon, err := widget.NewIcon(data)
+	// Cria o widget.Icon a partir dos dados vetoriais.
+	iconWidget, err := widget.NewIcon(iconData)
 	if err != nil {
-		appLogger.Errorf("Erro ao criar widget.Icon para IconType %d: %v", iconType, err)
-		return nil, fmt.Errorf("falha ao criar widget.Icon: %w", err)
-	}
-
-	iconCacheMaterial[iconType] = icon
-	return icon, nil
-}
-
-// GetImageOpIcon carrega um ícone PNG embutido e retorna uma paint.ImageOp.
-// Útil para ícones customizados que não são do conjunto Material.
-// `iconFileName` deve ser o nome do arquivo PNG (ex: "my_custom_icon.png")
-// que está em `assets_img_icons_png/`.
-func GetImageOpIcon(iconType IconType, iconFileName string) (paint.ImageOp, error) {
-	if imgOp, ok := iconCacheImageOp[iconType]; ok {
-		return imgOp, nil
-	}
-
-	filePath := filepath.Join(embeddedIconsDir, iconFileName)
-	fileData, err := embeddedIconsFS.ReadFile(filePath)
-	if err != nil {
-		appLogger.Errorf("Erro ao ler arquivo de ícone embutido '%s': %v", filePath, err)
-		// Tentar carregar um ícone de fallback do material
-		fallbackIcon, fallbackErr := GetMaterialIcon(IconError)
-		if fallbackErr == nil && fallbackIcon != nil {
-			// Isso é um widget.Icon, não ImageOp. Precisaria de um PNG de fallback.
-			// Por agora, retorna erro.
-			appLogger.Warnf("Ícone PNG '%s' não encontrado, e fallback PNG não implementado.", iconFileName)
+		appLogger.Errorf("Erro ao criar widget.Icon para IconType %d: %v. Usando ícone de erro.", iconType, err)
+		// Tenta usar um ícone de erro como fallback se a criação falhar.
+		errorIconData := icons.AlertError
+		iconWidget, err = widget.NewIcon(errorIconData) // Tenta criar o ícone de erro
+		if err != nil {
+			// Se até o ícone de erro falhar, retorna o erro original e um ícone nil.
+			appLogger.Errorf("Falha crítica ao criar ícone de fallback (erro): %v", err)
+			return nil, fmt.Errorf("falha ao criar widget.Icon para tipo %d e fallback: %w", iconType, err)
 		}
-		return paint.ImageOp{}, fmt.Errorf("falha ao ler ícone '%s': %w", iconFileName, err)
+		// Se o ícone de erro foi criado com sucesso, armazena-o no cache para este tipo.
+		iconCacheMaterial[iconType] = iconWidget
+		return iconWidget, nil // Retorna o ícone de erro, mas sem erro na função GetMaterialIcon.
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(fileData))
-	if err != nil {
-		appLogger.Errorf("Erro ao decodificar imagem do ícone '%s': %v", iconFileName, err)
-		return paint.ImageOp{}, fmt.Errorf("falha ao decodificar imagem '%s': %w", iconFileName, err)
-	}
-
-	imgOp := paint.NewImageOp(img)
-	iconCacheImageOp[iconType] = imgOp
-	return imgOp, nil
+	iconCacheMaterial[iconType] = iconWidget // Armazena no cache para uso futuro.
+	return iconWidget, nil
 }
 
-// GetLogoOp retorna o logo da aplicação como uma paint.ImageOp.
-// O logo.png deve estar em `assets_img_icons_png/logo.png`.
-func GetLogoOp() (paint.ImageOp, error) {
-	// O logo pode ser cacheado também se for usado frequentemente em diferentes partes.
-	// Por simplicidade, aqui ele é carregado toda vez, mas o ideal seria cachear.
-	return GetImageOpIcon(IconLogo, "logo.png") // Supondo que você tenha logo.png
-}
-
-// TODO: Implementar Theme-aware icon loading
-// Se você tiver diretórios 'light' e 'dark' com PNGs/SVGs, precisaria de lógica
-// para escolher o diretório correto com base no tema atual da aplicação.
-// func GetThemedImageOpIcon(iconType IconType, iconNameWithoutExt string, currentTheme string) (paint.ImageOp, error) {
-//    themeDir := "light"
-//    if strings.ToLower(currentTheme) == "dark" {
-//        themeDir = "dark"
-//    }
-//    fileName := fmt.Sprintf("%s.png", iconNameWithoutExt) // Ou .svg
-//    filePath := filepath.Join(embeddedIconsDir, themeDir, fileName)
-//    // ... lógica de carregamento similar a GetImageOpIcon ...
-// }
-
-// Helper para desenhar um widget.Icon (Material Icon)
-func LayoutMaterialIcon(gtx layout.Context, th *material.Theme, icon *widget.Icon, size unit.Dp, c color.NRGBA) layout.Dimensions {
+// LayoutMaterialIcon é um helper para desenhar um `*widget.Icon` (Material Icon) com tamanho e cor.
+// `th` é o tema atual, `icon` é o widget de ícone obtido de `GetMaterialIcon`.
+// `size` é o tamanho desejado em Dp, `iconColor` é a cor do ícone.
+func LayoutMaterialIcon(gtx layout.Context, th *material.Theme, icon *widget.Icon, size unit.Dp, iconColor color.NRGBA) layout.Dimensions {
 	if icon == nil {
-		return layout.Dimensions{}
+		// Se o ícone for nil (ex: IconNone), retorna dimensões vazias, ocupando o espaço `size` se necessário.
+		// Isso pode ser útil para alinhamento se um ícone puder estar ausente.
+		// Se não quiser ocupar espaço, retorne `layout.Dimensions{}`.
+		placeholderSize := gtx.Dp(size)
+		return layout.Dimensions{Size: image.Pt(placeholderSize, placeholderSize)}
 	}
+	// Cria um `material.Icon` a partir do `widget.Icon` para aplicar estilo do tema.
 	iconWidget := material.Icon(th, icon)
-	iconWidget.Color = c
-	iconWidget.Size = size
+	iconWidget.Color = iconColor
+	iconWidget.Size = size // Define o tamanho do ícone.
 	return iconWidget.Layout(gtx)
 }
 
-// Helper para desenhar uma paint.ImageOp (PNG/SVG renderizado)
-func LayoutImageOpIcon(gtx layout.Context, imgOp paint.ImageOp, size unit.Dp) layout.Dimensions {
+// GetIcon é uma função wrapper que tenta obter um ícone material.
+// Simplifica a chamada para as páginas, lidando com o erro internamente (logando).
+// Retorna nil se o ícone não puder ser carregado, permitindo que o layout decida como lidar.
+func GetIcon(iconType IconType) *widget.Icon {
+	icon, err := GetMaterialIcon(iconType)
+	if err != nil {
+		// O erro já é logado por GetMaterialIcon.
+		// Retorna nil para que o chamador possa decidir não desenhar nada ou usar um placeholder.
+		return nil
+	}
+	return icon
+}
+
+// Se você decidir usar SVGs embutidos no futuro:
+// 1. `//go:embed assets/icons/custom/*.svg`
+//    `var embeddedSVGIconsFS embed.FS`
+// 2. Uma função como `GetSVGIconOp(iconName string) (paint.ImageOp, error)`
+//    que lê o SVG, rasteriza-o para uma `image.Image` (usando uma biblioteca SVG como `github.com/srwiley/oksvg`),
+//    e então cria uma `paint.ImageOp` a partir da imagem rasterizada.
+// 3. Um cache para `paint.ImageOp` similar ao `iconCacheImageOp` do exemplo anterior.
+// 4. Um helper `LayoutSVGIcon` para desenhar e escalar a `paint.ImageOp`.
+
+// Exemplo de como poderia ser o `LayoutSVGIcon` (semelhante ao `LayoutImageOpIcon` do exemplo anterior):
+/*
+func LayoutSVGIcon(gtx layout.Context, imgOp paint.ImageOp, size unit.Dp, iconColor color.NRGBA) layout.Dimensions {
 	if imgOp.Size().Eq(image.Point{}) { // Imagem vazia
-		return layout.Dimensions{Size: image.Pt(gtx.Dp(size), gtx.Dp(size))}
+		placeholderSize := gtx.Dp(size)
+		return layout.Dimensions{Size: image.Pt(placeholderSize, placeholderSize)}
 	}
 
 	// Escalonar a imagem para o tamanho desejado
@@ -242,7 +250,7 @@ func LayoutImageOpIcon(gtx layout.Context, imgOp paint.ImageOp, size unit.Dp) la
 	targetSizePx := gtx.Dp(size)
 
 	var scale float32
-	if imgWidth > imgHeight {
+	if imgWidth > imgHeight { // Escala pela maior dimensão para caber
 		scale = float32(targetSizePx) / float32(imgWidth)
 	} else {
 		scale = float32(targetSizePx) / float32(imgHeight)
@@ -251,13 +259,18 @@ func LayoutImageOpIcon(gtx layout.Context, imgOp paint.ImageOp, size unit.Dp) la
 	finalWidth := int(float32(imgWidth) * scale)
 	finalHeight := int(float32(imgHeight) * scale)
 
-	// Desenhar a imagem
-	macro := op.Record(gtx.Ops)
-	imgOp.Add(gtx.Ops)
-	call := macro.Stop()
+	// Salva o estado da opacidade e da transformação
+	areaStack := clip.Rect{Max: image.Pt(finalWidth, finalHeight)}.Push(gtx.Ops)
+	paintStack := paint.ColorOp{Color: iconColor}.Push(gtx.Ops) // Aplica a cor (para SVGs monocromáticos)
+	transformStack := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(scale, scale))).Push(gtx.Ops)
 
-	defer op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(scale, scale))).Push(gtx.Ops).Pop()
-	call.Add(gtx.Ops)
+	imgOp.Add(gtx.Ops) // Adiciona a operação de desenho da imagem (já transformada pela stack)
+
+	// Restaura os estados
+	transformStack.Pop()
+	paintStack.Pop()
+	areaStack.Pop()
 
 	return layout.Dimensions{Size: image.Pt(finalWidth, finalHeight)}
 }
+*/

@@ -4,24 +4,38 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	// "github.com/google/uuid" // Se o ID fosse UUID
+	"unicode"
+
+	// "golang.org/x/text/cases" // Para Title Case correto
+	// "golang.org/x/text/language" // Para Title Case correto
+
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 )
 
 // DBNetwork representa a entidade Network (Rede) no banco de dados.
 type DBNetwork struct {
-	ID     uint64 `gorm:"primaryKey;autoIncrement"`              // ID único da rede
-	Name   string `gorm:"type:varchar(50);uniqueIndex;not null"` // Nome único da rede (case-insensitive no DB se possível)
-	Buyer  string `gorm:"type:varchar(100);not null"`            // Nome do comprador responsável
-	Status bool   `gorm:"not null;default:true"`                 // Status da rede (ativa/inativa)
+	ID uint64 `gorm:"primaryKey;autoIncrement"` // ID único da rede
 
-	// Campos de Auditoria
-	CreatedAt time.Time `gorm:"not null;default:now()"`
-	UpdatedAt time.Time `gorm:"not null;default:now()"` // GORM atualiza automaticamente com autoUpdateTime
-	CreatedBy *string   `gorm:"type:varchar(50)"`       // Username de quem criou (opcional)
-	UpdatedBy *string   `gorm:"type:varchar(50)"`       // Username de quem atualizou por último (opcional)
+	// Nome único da rede, armazenado em minúsculas para consistência e buscas case-insensitive.
+	// A constraint `uniqueIndex` deve ser configurada no DB para ser case-insensitive se o DB suportar,
+	// ou a lógica da aplicação deve garantir isso.
+	Name string `gorm:"type:varchar(50);uniqueIndex;not null"`
 
-	// Relação com CNPJs (Opcional, se usando GORM com Preload/Joins)
-	// CNPJs     []DBCNPJ `gorm:"foreignKey:NetworkID"`
+	// Nome do comprador responsável, armazenado em Title Case.
+	Buyer string `gorm:"type:varchar(100);not null"`
+
+	// Status da rede (true para ativa, false para inativa).
+	Status bool `gorm:"not null;default:true"`
+
+	// Campos de Auditoria (gerenciados pelo GORM ou pela aplicação).
+	CreatedAt time.Time `gorm:"not null;autoCreateTime"` // GORM preenche na criação
+	UpdatedAt time.Time `gorm:"not null;autoUpdateTime"` // GORM preenche na criação e atualização
+	CreatedBy *string   `gorm:"type:varchar(50)"`        // Username de quem criou (opcional).
+	UpdatedBy *string   `gorm:"type:varchar(50)"`        // Username de quem atualizou por último (opcional).
+
+	// Relação com CNPJs (Opcional, para GORM com Preload/Joins).
+	// Se definida, é importante configurar o comportamento de onDelete e onUpdate.
+	// CNPJs     []DBCNPJ `gorm:"foreignKey:NetworkID;constraint:OnDelete:RESTRICT"` // Ex: Restringir deleção se houver CNPJs.
 }
 
 // TableName especifica o nome da tabela para GORM.
@@ -31,56 +45,62 @@ func (DBNetwork) TableName() string {
 
 // --- Structs para Transferência de Dados e Validação ---
 
-// NetworkBase contém campos comuns.
-type NetworkBase struct {
-	Name  string `json:"name"`  // Nome da rede
-	Buyer string `json:"buyer"` // Nome do comprador
+// NetworkCreate é usado para criar uma nova rede.
+// Inclui tags de validação que seriam usadas por uma biblioteca como `go-playground/validator`.
+type NetworkCreate struct {
+	// `validate:"required,min=3,max=50,network_name_custom"` sugere validação customizada para o nome.
+	Name string `json:"name" validate:"required,min=3,max=50,network_name_format"`
+
+	// `validate:"required,min=5,max=100,buyer_name_custom"` sugere validação customizada para o comprador.
+	Buyer string `json:"buyer" validate:"required,min=2,max=100,buyer_name_format"` // Min 2 para nomes como "Li Li"
 }
 
-// NetworkCreate é usado para criar uma nova rede.
-// Inclui tags de validação.
-type NetworkCreate struct {
-	Name  string `json:"name" validate:"required,min=3,max=50,network_name_custom"` // network_name_custom seria uma tag custom
-	Buyer string `json:"buyer" validate:"required,min=5,max=100,buyer_name_custom"` // buyer_name_custom seria uma tag custom
-	// Status é true por padrão no banco
-	// CreatedBy/UpdatedBy são definidos pelo serviço com base no usuário logado
-}
+var (
+	// Regex para validação de nome de rede: letras, números, espaços, hífen, underscore.
+	// \p{L} para letras Unicode, \d para dígitos.
+	networkNameValidationRegex = regexp.MustCompile(`^[\p{L}\d\s_-]{3,50}$`)
+
+	// Regex para nome do comprador: letras, espaços, ponto, hífen.
+	buyerNameValidationRegex = regexp.MustCompile(`^[\p{L}\s.-]{2,100}$`) // Min 2
+)
 
 // CleanAndValidate normaliza e valida os campos de NetworkCreate.
-// Retorna um erro se a validação falhar. O serviço chamaria este método.
+// Retorna um erro se a validação falhar. Este método deve ser chamado pelo serviço.
 // O nome da rede é convertido para minúsculas, e o comprador para Title Case.
 func (nc *NetworkCreate) CleanAndValidate() error {
 	// Limpar e normalizar nome
 	cleanedName := strings.TrimSpace(nc.Name)
 	if cleanedName == "" {
-		return NewValidationError("Nome da rede é obrigatório.", map[string]string{"name": "Nome é obrigatório"})
+		return appErrors.NewValidationError("Nome da rede é obrigatório.", map[string]string{"name": "obrigatório"})
 	}
-	// TODO: Chamar validador customizado para nome (do utils/validators.go)
-	// if !validators.IsValidNetworkName(cleanedName) { // Supondo que exista IsValidNetworkName
-	//  return NewValidationError("Nome da rede inválido.", map[string]string{"name": "Formato do nome inválido"})
-	// }
+	if !networkNameValidationRegex.MatchString(cleanedName) {
+		return appErrors.NewValidationError(
+			"Nome da rede deve ter entre 3 e 50 caracteres e conter apenas letras, números, espaços, '_' ou '-'.",
+			map[string]string{"name": "formato inválido"},
+		)
+	}
 	nc.Name = strings.ToLower(cleanedName) // Padroniza para minúsculas
 
 	// Limpar e normalizar comprador
 	cleanedBuyer := strings.TrimSpace(nc.Buyer)
 	if cleanedBuyer == "" {
-		return NewValidationError("Nome do comprador é obrigatório.", map[string]string{"buyer": "Comprador é obrigatório"})
+		return appErrors.NewValidationError("Nome do comprador é obrigatório.", map[string]string{"buyer": "obrigatório"})
 	}
-	// TODO: Chamar validador customizado para comprador
-	// if !validators.IsValidBuyerName(cleanedBuyer) {
-	//  return NewValidationError("Nome do comprador inválido.", map[string]string{"buyer": "Formato do comprador inválido"})
-	// }
+	if !buyerNameValidationRegex.MatchString(cleanedBuyer) {
+		return appErrors.NewValidationError(
+			"Nome do comprador deve ter entre 2 e 100 caracteres e conter apenas letras, espaços, '.' ou '-'.",
+			map[string]string{"buyer": "formato inválido"},
+		)
+	}
 	// Converte para Title Case (primeira letra de cada palavra maiúscula)
-	// Atenção: strings.Title está depreciado. Usar golang.org/x/text/cases e golang.org/x/text/language
-	// Exemplo simplificado (pode não ser perfeito para todos os casos):
+	// Para uma conversão correta de Title Case considerando a localidade:
+	// nc.Buyer = cases.Title(language.BrazilianPortuguese, cases.NoLower).String(cleanedBuyer)
+	// Se não usar x/text/cases, uma aproximação simples (pode não ser ideal para todos os nomes):
 	words := strings.Fields(cleanedBuyer)
 	for i, word := range words {
 		if len(word) > 0 {
-			// Isso é uma simplificação, para Title Case correto, use x/text/cases.
-			// Gostaríamos de usar cases.Title(language.BrazilianPortuguese).String(cleanedBuyer)
-			// mas para evitar dependência externa extra aqui, fazemos uma aproximação.
 			runes := []rune(strings.ToLower(word))
-			runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+			runes[0] = unicode.ToUpper(runes[0])
 			words[i] = string(runes)
 		}
 	}
@@ -90,43 +110,48 @@ func (nc *NetworkCreate) CleanAndValidate() error {
 }
 
 // NetworkUpdate é usado para atualizar uma rede existente.
-// Campos são ponteiros para indicar atualizações parciais.
+// Campos são ponteiros para indicar atualizações parciais (omitempty).
 type NetworkUpdate struct {
-	Name   *string `json:"name,omitempty" validate:"omitempty,min=3,max=50,network_name_custom"`
-	Buyer  *string `json:"buyer,omitempty" validate:"omitempty,min=5,max=100,buyer_name_custom"`
+	Name   *string `json:"name,omitempty" validate:"omitempty,min=3,max=50,network_name_format"`
+	Buyer  *string `json:"buyer,omitempty" validate:"omitempty,min=2,max=100,buyer_name_format"`
 	Status *bool   `json:"status,omitempty"`
-	// UpdatedBy será definido pelo serviço
+	// UpdatedBy será definido pelo serviço com base no usuário logado.
 }
 
-// CleanAndValidate normaliza e valida os campos de NetworkUpdate.
+// CleanAndValidate normaliza e valida os campos de NetworkUpdate que foram fornecidos.
 // Chamado pelo serviço.
 func (nu *NetworkUpdate) CleanAndValidate() error {
 	if nu.Name != nil {
 		cleanedName := strings.TrimSpace(*nu.Name)
 		if cleanedName == "" {
-			return NewValidationError("Nome da rede não pode ser vazio se fornecido para atualização.", map[string]string{"name": "Nome não pode ser vazio"})
+			return appErrors.NewValidationError("Nome da rede não pode ser vazio se fornecido para atualização.", map[string]string{"name": "não pode ser vazio"})
 		}
-		// TODO: Chamar validador customizado
-		// if !validators.IsValidNetworkName(cleanedName) {
-		//  return NewValidationError("Nome da rede inválido.", map[string]string{"name": "Formato do nome inválido"})
-		// }
+		if !networkNameValidationRegex.MatchString(cleanedName) {
+			return appErrors.NewValidationError(
+				"Nome da rede deve ter entre 3 e 50 caracteres e conter apenas letras, números, espaços, '_' ou '-'.",
+				map[string]string{"name": "formato inválido"},
+			)
+		}
 		*nu.Name = strings.ToLower(cleanedName)
 	}
 
 	if nu.Buyer != nil {
 		cleanedBuyer := strings.TrimSpace(*nu.Buyer)
 		if cleanedBuyer == "" {
-			return NewValidationError("Nome do comprador não pode ser vazio se fornecido para atualização.", map[string]string{"buyer": "Comprador não pode ser vazio"})
+			return appErrors.NewValidationError("Nome do comprador não pode ser vazio se fornecido para atualização.", map[string]string{"buyer": "não pode ser vazio"})
 		}
-		// TODO: Chamar validador customizado
-		// if !validators.IsValidBuyerName(cleanedBuyer) {
-		//  return NewValidationError("Nome do comprador inválido.", map[string]string{"buyer": "Formato do comprador inválido"})
-		// }
+		if !buyerNameValidationRegex.MatchString(cleanedBuyer) {
+			return appErrors.NewValidationError(
+				"Nome do comprador deve ter entre 2 e 100 caracteres e conter apenas letras, espaços, '.' ou '-'.",
+				map[string]string{"buyer": "formato inválido"},
+			)
+		}
+		// nu.Buyer = cases.Title(language.BrazilianPortuguese, cases.NoLower).String(cleanedBuyer)
 		words := strings.Fields(cleanedBuyer)
 		for i, word := range words {
 			if len(word) > 0 {
 				runes := []rune(strings.ToLower(word))
-				runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+				runes[0] = unicode.ToUpper(runes[0])
 				words[i] = string(runes)
 			}
 		}
@@ -135,29 +160,28 @@ func (nu *NetworkUpdate) CleanAndValidate() error {
 	return nil
 }
 
-// NetworkPublic representa os dados de uma rede para a UI ou API.
-// Espelha o NetworkInDB do Python.
+// NetworkPublic representa os dados de uma rede para a UI ou API (DTO).
 type NetworkPublic struct {
 	ID        uint64    `json:"id"`
-	Name      string    `json:"name"`
-	Buyer     string    `json:"buyer"`
+	Name      string    `json:"name"`  // Nome da rede (em minúsculas)
+	Buyer     string    `json:"buyer"` // Nome do comprador (em Title Case)
 	Status    bool      `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	CreatedBy *string   `json:"created_by,omitempty"`
 	UpdatedBy *string   `json:"updated_by,omitempty"`
-	// CNPJCount int    `json:"cnpj_count,omitempty"` // Opcional: Contagem de CNPJs associados
+	// CNPJCount int       `json:"cnpj_count,omitempty"` // Opcional: Contagem de CNPJs associados, se necessário na UI.
 }
 
-// ToNetworkPublic converte um DBNetwork para NetworkPublic.
+// ToNetworkPublic converte um DBNetwork (modelo do banco) para NetworkPublic (DTO).
 func ToNetworkPublic(dbNet *DBNetwork) *NetworkPublic {
 	if dbNet == nil {
 		return nil
 	}
 	return &NetworkPublic{
 		ID:        dbNet.ID,
-		Name:      dbNet.Name,
-		Buyer:     dbNet.Buyer,
+		Name:      dbNet.Name,  // Já está em minúsculas no DB
+		Buyer:     dbNet.Buyer, // Já está em Title Case no DB
 		Status:    dbNet.Status,
 		CreatedAt: dbNet.CreatedAt,
 		UpdatedAt: dbNet.UpdatedAt,
@@ -174,12 +198,3 @@ func ToNetworkPublicList(dbNets []*DBNetwork) []*NetworkPublic {
 	}
 	return publicList
 }
-
-// Regex para validação de nome de rede e comprador (Exemplos, ajuste conforme necessário)
-// Estes seriam usados em `utils/validators.go` e chamados por CleanAndValidate.
-var (
-	// Permite letras (incluindo acentuadas com \p{L}), números, espaços, hífen, underscore. Min 3, Max 50.
-	networkNameRegex = regexp.MustCompile(`^[\p{L}\w\s\-]{3,50}$`)
-	// Permite letras (incluindo acentuadas), espaços, ponto, hífen. Min 5, Max 100.
-	buyerNameRegex = regexp.MustCompile(`^[\p{L}\s.\-]{5,100}$`)
-)

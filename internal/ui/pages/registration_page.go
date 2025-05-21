@@ -6,11 +6,11 @@ import (
 	"image/color"
 	"regexp"
 	"strings"
-
-	// "time"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -24,7 +24,7 @@ import (
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils" // Para validadores
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils"
 )
 
 // RegistrationPage gerencia a UI para cadastro de novos usuários.
@@ -32,30 +32,33 @@ type RegistrationPage struct {
 	router      *ui.Router
 	cfg         *core.Config
 	userService services.UserService
-	// Se admin puder criar usuários aqui, precisaria da sessão do admin
-	adminSession *auth.SessionData // nil se for auto-registro
+	// Se um administrador estiver criando o usuário, a sessão do admin é passada.
+	// Para auto-registro, `adminSession` será nil.
+	adminSession *auth.SessionData
 
-	isLoading     bool
-	statusMessage string
-	messageColor  color.NRGBA
+	isLoading     bool        // True se uma operação de backend estiver em andamento.
+	statusMessage string      // Para exibir mensagens de erro ou sucesso globais da página.
+	messageColor  color.NRGBA // Cor da `statusMessage`.
 
-	// Campos de entrada
+	// Campos de entrada do formulário.
 	usernameInput        widget.Editor
 	emailInput           widget.Editor
-	passwordInput        *components.PasswordInput
-	confirmPasswordInput *components.PasswordInput
+	fullNameInput        widget.Editor             // Adicionado para nome completo.
+	passwordInput        *components.PasswordInput // Componente customizado.
+	confirmPasswordInput *components.PasswordInput // Para confirmação da nova senha.
 
-	// Feedback para inputs
+	// Feedback para os campos de entrada (mensagens de erro de validação).
 	usernameFeedback        string
 	emailFeedback           string
-	passwordFeedback        string // Para força da senha
-	confirmPasswordFeedback string // Para "senhas não coincidem"
+	fullNameFeedback        string // Adicionado
+	passwordFeedback        string // Para força da senha (geralmente gerenciado pelo PasswordInput).
+	confirmPasswordFeedback string // Para "senhas não coincidem".
 
-	// Botões
+	// Botões de ação.
 	registerBtn widget.Clickable
-	cancelBtn   widget.Clickable // Ou "Voltar para Login"
+	cancelBtn   widget.Clickable // Ou "Voltar para Login".
 
-	spinner *components.LoadingSpinner
+	spinner *components.LoadingSpinner // Spinner de carregamento.
 }
 
 // NewRegistrationPage cria uma nova instância da página de cadastro.
@@ -63,157 +66,173 @@ func NewRegistrationPage(
 	router *ui.Router,
 	cfg *core.Config,
 	userSvc services.UserService,
-	adminSess *auth.SessionData, // Pode ser nil para auto-registro
+	adminSess *auth.SessionData, // Pode ser nil para auto-registro.
 ) *RegistrationPage {
-	th := router.GetAppWindow().Theme() // Assumindo que AppWindow tem Theme()
+	th := router.GetAppWindow().Theme() // Obtém o tema da AppWindow.
+
 	p := &RegistrationPage{
 		router:       router,
 		cfg:          cfg,
 		userService:  userSvc,
 		adminSession: adminSess,
-		spinner:      components.NewLoadingSpinner(),
+		spinner:      components.NewLoadingSpinner(theme.Colors.Primary),
 	}
 
 	p.usernameInput.SingleLine = true
-	p.usernameInput.Hint = "Nome de usuário (login)"
+	p.usernameInput.Hint = "Nome de usuário (para login)"
 
 	p.emailInput.SingleLine = true
 	p.emailInput.Hint = "Seu endereço de e-mail"
+
+	p.fullNameInput.SingleLine = true
+	p.fullNameInput.Hint = "Nome Completo (opcional)"
 
 	p.passwordInput = components.NewPasswordInput(th, cfg)
 	p.passwordInput.SetHint(fmt.Sprintf("Senha (mín. %d caracteres)", cfg.PasswordMinLength))
 
 	p.confirmPasswordInput = components.NewPasswordInput(th, cfg)
 	p.confirmPasswordInput.SetHint("Confirme a senha")
-	// TODO: Adicionar método ao PasswordInput para esconder a barra de força
-	// p.confirmPasswordInput.ShowStrengthBar(false)
+	p.confirmPasswordInput.ShowStrengthBar(false) // Não mostra barra de força para confirmação.
 
 	return p
 }
 
+// OnNavigatedTo é chamado quando a página se torna ativa.
 func (p *RegistrationPage) OnNavigatedTo(params interface{}) {
 	appLogger.Info("Navegou para RegistrationPage")
-	p.resetForm()
-	// Se adminSession for passado via params, pode ser usado
+	// Verifica se `params` é a sessão do admin, se esperado.
 	if sess, ok := params.(*auth.SessionData); ok {
-		p.adminSession = sess
+		p.adminSession = sess // Atualiza se admin está navegando para cá.
+	} else if params != nil {
+		// Se params não for nil e não for SessionData, pode ser um erro de navegação.
+		appLogger.Warnf("RegistrationPage recebeu parâmetros inesperados: %T", params)
 	}
+	p.resetForm() // Reseta o formulário para um estado limpo.
 }
 
-func (p.RegistrationPage) OnNavigatedFrom() {
+// OnNavigatedFrom é chamado quando o router navega para fora desta página.
+func (p *RegistrationPage) OnNavigatedFrom() {
 	appLogger.Info("Navegando para fora da RegistrationPage")
 	p.isLoading = false
-	p.spinner.Stop(p.router.GetAppWindow().Context())
+	p.spinner.Stop(p.router.GetAppWindow().Context()) // Para o spinner.
 }
 
+// resetForm limpa todos os campos e mensagens de feedback da página.
 func (p *RegistrationPage) resetForm() {
 	p.isLoading = false
 	p.statusMessage = ""
 	p.usernameInput.SetText("")
 	p.emailInput.SetText("")
-	p.passwordInput.SetText("")
-	p.confirmPasswordInput.SetText("")
-	p.usernameFeedback = ""
-	p.emailFeedback = ""
-	p.passwordFeedback = ""
-	p.confirmPasswordFeedback = ""
+	p.fullNameInput.SetText("")
+	p.passwordInput.Clear()
+	p.confirmPasswordInput.Clear()
+	p.clearAllFeedbacks()
 	p.spinner.Stop(p.router.GetAppWindow().Context())
 }
 
+// clearAllFeedbacks limpa as mensagens de erro dos campos de input.
+func (p *RegistrationPage) clearAllFeedbacks() {
+	p.usernameFeedback = ""
+	p.emailFeedback = ""
+	p.fullNameFeedback = ""
+	p.passwordFeedback = "" // O PasswordInput pode gerenciar seu próprio feedback de força.
+	p.confirmPasswordFeedback = ""
+	p.statusMessage = "" // Limpa mensagem global da página também.
+}
+
+// Layout é o método principal de desenho da página.
 func (p *RegistrationPage) Layout(gtx layout.Context) layout.Dimensions {
 	th := p.router.GetAppWindow().Theme()
 
-	// Processar eventos dos inputs para validação inline
-	for _, e := range p.usernameInput.Events(gtx) {
-		if _, ok := e.(widget.ChangeEvent); ok {
-			p.validateUsernameUI()
-			p.statusMessage = ""
-		}
+	// Processar eventos dos inputs para limpar feedback ao digitar.
+	if p.usernameInput.Update(gtx) {
+		p.usernameFeedback = ""
+		p.statusMessage = ""
 	}
-	for _, e := range p.emailInput.Events(gtx) {
-		if _, ok := e.(widget.ChangeEvent); ok {
-			p.validateEmailUI()
-			p.statusMessage = ""
-		}
+	if p.emailInput.Update(gtx) {
+		p.emailFeedback = ""
+		p.statusMessage = ""
 	}
-	// Para PasswordInput, a validação de força é interna. Apenas a de "match" é aqui.
-	// E o feedback da força vem do próprio PasswordInput.
-	// Precisaríamos de um callback TextChanged no PasswordInput ou verificar eventos.
-	// Exemplo: p.passwordInput.TextChanged = func(s string) { p.validatePasswordMatchUI(); p.statusMessage = "" }
-	//          p.confirmPasswordInput.TextChanged = func(s string) { p.validatePasswordMatchUI(); p.statusMessage = "" }
-	// Ou, para simplificar, validar tudo no submit.
+	if p.fullNameInput.Update(gtx) {
+		p.fullNameFeedback = ""
+		p.statusMessage = ""
+	}
+	// O PasswordInput tem seu próprio Layout que lida com eventos internos.
+	// Para limpar `passwordFeedback` ou `confirmPasswordFeedback` ao digitar neles,
+	// seria necessário que PasswordInput emitisse um evento OnChange.
 
-	// Processar cliques nos botões
-	if p.registerBtn.Clicked(gtx) {
+	// Processar cliques nos botões.
+	if p.registerBtn.Clicked(gtx) && !p.isLoading {
 		p.handleRegister()
 	}
-	if p.cancelBtn.Clicked(gtx) {
-		if p.adminSession != nil { // Se admin está criando, talvez volte para Admin Page
+	if p.cancelBtn.Clicked(gtx) && !p.isLoading {
+		if p.adminSession != nil { // Se admin está criando, volta para a página de admin.
 			p.router.NavigateTo(ui.PageAdminPermissions, nil)
-		} else { // Se auto-registro, volta para Login
+		} else { // Se auto-registro, volta para Login.
 			p.router.NavigateTo(ui.PageLogin, nil)
 		}
 	}
 
-	titleText := "Criar Nova Conta"
+	titleText := "Criar Nova Conta de Usuário"
 	if p.adminSession != nil {
 		titleText = "Cadastrar Novo Usuário (Admin)"
 	}
 	titleWidget := material.H5(th, titleText)
 	titleWidget.Font.Weight = font.Bold
+	titleWidget.Alignment = text.Middle
 
-	// Layout da página
+	// Layout centralizado na tela.
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(20)).Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Max.X = gtx.Dp(450) // Limita largura do formulário
+				maxWidth := gtx.Dp(unit.Dp(450)) // Largura máxima do formulário.
+				gtx.Constraints.Max.X = maxWidth
 				if gtx.Constraints.Max.X > gtx.Constraints.Min.X {
-					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					gtx.Constraints.Min.X = maxWidth
 				}
 				return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle, Spacing: layout.SpaceSides}.Layout(gtx,
-					layout.Rigid(func(gtx C) D { // Logo
-						// TODO: Adicionar o logo como no LoginPage
-						return titleWidget.Layout(gtx)
-					}),
+					layout.Rigid(titleWidget.Layout),
 					layout.Rigid(layout.Spacer{Height: theme.LargeVSpacer}.Layout),
 
-					layout.Rigid(p.labeledEditor(gtx, th, "Usuário (login):*", material.Editor(th, &p.usernameInput, p.usernameInput.Hint).Layout, p.usernameFeedback)),
+					layout.Rigid(p.labeledInput(gtx, th, "Usuário (para login):*", material.Editor(th, &p.usernameInput, p.usernameInput.Hint).Layout, p.usernameFeedback)),
 					layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-					layout.Rigid(p.labeledEditor(gtx, th, "E-mail:*", material.Editor(th, &p.emailInput, p.emailInput.Hint).Layout, p.emailFeedback)),
+					layout.Rigid(p.labeledInput(gtx, th, "E-mail:*", material.Editor(th, &p.emailInput, p.emailInput.Hint).Layout, p.emailFeedback)),
 					layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-					layout.Rigid(p.labeledEditor(gtx, th, "Senha:*", p.passwordInput.Layout(gtx, th), p.passwordFeedback)),
+					layout.Rigid(p.labeledInput(gtx, th, "Nome Completo (Opcional):", material.Editor(th, &p.fullNameInput, p.fullNameInput.Hint).Layout, p.fullNameFeedback)),
 					layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
-					layout.Rigid(p.labeledEditor(gtx, th, "Confirmar Senha:*", p.confirmPasswordInput.Layout(gtx, th), p.confirmPasswordFeedback)),
+					layout.Rigid(p.labeledInput(gtx, th, "Senha:*", p.passwordInput.Layout(gtx, th), p.passwordFeedback)), // PasswordInput já tem seu layout.
+					layout.Rigid(layout.Spacer{Height: theme.DefaultVSpacer}.Layout),
+					layout.Rigid(p.labeledInput(gtx, th, "Confirmar Senha:*", p.confirmPasswordInput.Layout(gtx, th), p.confirmPasswordFeedback)),
 
 					layout.Rigid(layout.Spacer{Height: theme.LargeVSpacer}.Layout),
 
-					// Botões
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						btnReg := material.Button(th, &p.registerBtn, "Cadastrar")
+					// Botões ou Spinner.
+					layout.Rigid(func(gtx C) D {
+						if p.isLoading {
+							return layout.Center.Layout(gtx, p.spinner.Layout)
+						}
+						btnReg := material.Button(th, &p.registerBtn, "Cadastrar Usuário")
 						btnReg.Background = theme.Colors.Primary
-						// btnReg.Enabled = !p.isLoading // Controlar habilitação
+						btnReg.Color = theme.Colors.PrimaryText
+						btnReg.CornerRadius = theme.CornerRadius
 
 						btnCan := material.Button(th, &p.cancelBtn, "Cancelar")
-						// btnCan.Enabled = !p.isLoading
+						// Estilo secundário para o botão Cancelar.
+						btnCan.Background = color.NRGBA{} // Transparente
+						btnCan.Color = theme.Colors.Primary
 
 						return layout.Flex{Spacing: layout.SpaceBetween}.Layout(gtx,
 							layout.Flexed(1, btnCan.Layout),
 							layout.Flexed(1, btnReg.Layout),
 						)
 					}),
-					// Mensagem de Status Global
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if p.statusMessage != "" {
+					// Mensagem de Status Global da página.
+					layout.Rigid(func(gtx C) D {
+						if p.statusMessage != "" && !p.isLoading {
 							lbl := material.Body2(th, p.statusMessage)
 							lbl.Color = p.messageColor
-							return layout.Inset{Top: theme.DefaultVSpacer}.Layout(gtx, layout.Center.Layout(gtx, lbl.Layout))
-						}
-						return layout.Dimensions{}
-					}),
-					// Spinner
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if p.isLoading {
-							// return p.spinner.Layout(gtx) // Precisa de layout.Stack
+							lbl.Alignment = text.Middle
+							return layout.Inset{Top: theme.DefaultVSpacer}.Layout(gtx, lbl.Layout)
 						}
 						return layout.Dimensions{}
 					}),
@@ -222,15 +241,17 @@ func (p *RegistrationPage) Layout(gtx layout.Context) layout.Dimensions {
 	})
 }
 
-func (p *RegistrationPage) labeledEditor(gtx layout.Context, th *material.Theme, labelText string, editorWidget layout.Widget, feedbackText string) layout.Dimensions {
+// labeledInput é um helper para criar um Label + Widget de Input + FeedbackLabel.
+func (p *RegistrationPage) labeledInput(gtx layout.Context, th *material.Theme, labelText string, inputWidgetLayout layout.Widget, feedbackText string) layout.Dimensions {
+	label := material.Body1(th, labelText)
 	return layout.Flex{Axis: layout.Vertical, Spacing: layout.Tight}.Layout(gtx,
-		layout.Rigid(material.Body1(th, labelText).Layout),
-		layout.Rigid(editorWidget),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		layout.Rigid(label.Layout),
+		layout.Rigid(inputWidgetLayout), // O widget de input (ex: material.Editor ou PasswordInput.Layout)
+		layout.Rigid(func(gtx C) D { // Feedback de erro para o input
 			if feedbackText != "" {
-				lbl := material.Body2(th, feedbackText)
-				lbl.Color = theme.Colors.Danger
-				return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+				feedbackLabel := material.Body2(th, feedbackText)
+				feedbackLabel.Color = theme.Colors.Danger
+				return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, feedbackLabel.Layout)
 			}
 			return layout.Dimensions{}
 		}),
@@ -239,111 +260,105 @@ func (p *RegistrationPage) labeledEditor(gtx layout.Context, th *material.Theme,
 
 // --- Lógica de Validação e Ação ---
 
-func (p *RegistrationPage) validateAllFields() bool {
-	p.clearAllFeedbacks()
+// validateAllFieldsUI valida todos os campos do formulário na UI e atualiza os feedbacks.
+// Retorna true se todos os campos forem válidos.
+func (p *RegistrationPage) validateAllFieldsUI() bool {
+	p.clearAllFeedbacks() // Limpa feedbacks antigos antes de revalidar.
 	allValid := true
 
-	if !p.validateUsernameUI() {
+	// Validar Username
+	username := strings.TrimSpace(p.usernameInput.Text())
+	if username == "" {
+		p.usernameFeedback = "Nome de usuário é obrigatório."
 		allValid = false
-	}
-	if !p.validateEmailUI() {
+	} else if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]{3,50}$`, username); !matched {
+		// Usar regex do modelo UserCreate para consistência, ou utils.IsValidUsernameFormat
+		p.usernameFeedback = "Usuário deve ter 3-50 caracteres (letras, números, _, -)."
 		allValid = false
 	}
 
-	password := p.passwordInput.Text()
-	confirmPassword := p.confirmPasswordInput.Text()
+	// Validar Email
+	email := strings.TrimSpace(p.emailInput.Text())
+	if email == "" {
+		p.emailFeedback = "E-mail é obrigatório."
+		allValid = false
+	} else if errValEmail := utils.ValidateEmail(email); errValEmail != nil {
+		p.emailFeedback = errValEmail.Error() // Assume que ValidateEmail retorna erro.
+		allValid = false
+	}
 
+	// Validar FullName (opcional, mas com limite de tamanho se preenchido)
+	fullName := strings.TrimSpace(p.fullNameInput.Text())
+	if len(fullName) > 100 {
+		p.fullNameFeedback = "Nome completo não pode exceder 100 caracteres."
+		allValid = false
+	}
+
+	// Validar Senha
+	password := p.passwordInput.Text() // Não trim aqui.
 	if password == "" {
-		p.passwordFeedback = "Senha é obrigatória."
+		p.passwordFeedback = "Senha é obrigatória." // PasswordInput pode já mostrar isso.
 		allValid = false
 	} else {
 		strength := utils.ValidatePasswordStrength(password, p.cfg.PasswordMinLength)
 		if !strength.IsValid {
-			p.passwordFeedback = fmt.Sprintf("Senha fraca: %s", strings.Join(strength.GetErrorDetailsList(), ", "))
+			// PasswordInput já mostra a barra de força.
+			// Este feedback é adicional, se necessário, ou pode ser omitido.
+			p.passwordFeedback = fmt.Sprintf("Senha fraca ou inválida: %s", strings.Join(strength.GetErrorDetailsList(), ", "))
 			allValid = false
 		}
 	}
 
+	// Validar Confirmação de Senha
+	confirmPassword := p.confirmPasswordInput.Text()
 	if confirmPassword == "" {
 		p.confirmPasswordFeedback = "Confirmação de senha é obrigatória."
 		allValid = false
 	} else if password != "" && password != confirmPassword {
 		p.confirmPasswordFeedback = "As senhas não coincidem."
+		p.passwordFeedback = "As senhas não coincidem." // Também no campo de senha
 		allValid = false
 	}
 
 	if !allValid {
-		p.router.GetAppWindow().Invalidate() // Para mostrar feedbacks
+		p.router.GetAppWindow().Invalidate() // Atualiza a UI para mostrar todos os feedbacks.
 	}
 	return allValid
 }
 
-func (p *RegistrationPage) validateUsernameUI() bool {
-	username := strings.TrimSpace(p.usernameInput.Text())
-	p.usernameFeedback = "" // Limpa antes
-	if username == "" {
-		p.usernameFeedback = "Nome de usuário é obrigatório."
-		return false
-	}
-	// Regex do Python: ^[a-zA-Z0-9_-]{3,50}$
-	// Go regex não tem \w para alfanumérico + underscore diretamente como Python
-	// Use [a-zA-Z0-9_] ou \p{L}\p{N}_
-	// Vamos usar uma regex mais simples para o exemplo.
-	// O validador em `models.UserCreate.CleanAndValidate` e `utils` deve ser mais robusto.
-	if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]{3,50}$`, username); !matched {
-		p.usernameFeedback = "Usuário deve ter 3-50 caracteres (letras, números, _, -)."
-		return false
-	}
-	return true
-}
-
-func (p *RegistrationPage) validateEmailUI() bool {
-	email := strings.TrimSpace(strings.ToLower(p.emailInput.Text()))
-	p.emailFeedback = "" // Limpa antes
-	if email == "" {
-		p.emailFeedback = "E-mail é obrigatório."
-		return false
-	}
-	if err := utils.ValidateEmail(email); err != nil { // Supondo que utils.ValidateEmail retorna erro
-		p.emailFeedback = err.Error()
-		return false
-	}
-	return true
-}
-
-func (p *RegistrationPage) clearAllFeedbacks() {
-	p.usernameFeedback = ""
-	p.emailFeedback = ""
-	p.passwordFeedback = ""
-	p.confirmPasswordFeedback = ""
-	p.statusMessage = ""
-}
-
+// handleRegister lida com a submissão do formulário de cadastro.
 func (p *RegistrationPage) handleRegister() {
-	if p.isLoading {
-		return
-	}
-
-	if !p.validateAllFields() {
+	if !p.validateAllFieldsUI() {
 		appLogger.Warn("Validação da UI de cadastro falhou.")
+		p.statusMessage = "Por favor, corrija os erros no formulário."
+		p.messageColor = theme.Colors.Warning
+		p.router.GetAppWindow().Invalidate()
 		return
 	}
 
 	p.isLoading = true
-	p.statusMessage = "Cadastrando usuário..."
+	p.statusMessage = "Cadastrando usuário, por favor aguarde..."
 	p.messageColor = theme.Colors.TextMuted
 	p.spinner.Start(p.router.GetAppWindow().Context())
 	p.router.GetAppWindow().Invalidate()
 
-	// Coleta os dados
-	userData := models.UserCreate{
-		Username: p.usernameInput.Text(), // CleanAndValidate do modelo fará trim e toLower
-		Email:    p.emailInput.Text(),    // CleanAndValidate do modelo fará trim e toLower
-		Password: p.passwordInput.Text(),
-		// RoleNames será ["user"] por padrão se não alterado no modelo ou serviço
+	// Coleta os dados para o serviço.
+	// O método CleanAndValidate do modelo UserCreate fará a normalização final (ex: toLower).
+	fullNameText := strings.TrimSpace(p.fullNameInput.Text())
+	var fullNamePtr *string
+	if fullNameText != "" {
+		fullNamePtr = &fullNameText
 	}
-	// Se admin estiver criando, poderia permitir seleção de roles
-	// if p.adminSession != nil { userData.RoleNames = p.getSelectedRolesFromUI() }
+
+	userData := models.UserCreate{
+		Username: strings.TrimSpace(p.usernameInput.Text()),
+		Email:    strings.TrimSpace(p.emailInput.Text()),
+		FullName: fullNamePtr,
+		Password: p.passwordInput.Text(), // Senha bruta, será hasheada no serviço.
+		// RoleNames: Por padrão, o serviço atribuirá ["user"] se for auto-registro
+		// ou se admin não especificar roles.
+		// Se admin puder especificar roles nesta página, eles seriam coletados aqui.
+	}
 
 	go func(ud models.UserCreate, adminSess *auth.SessionData) {
 		var opErr error
@@ -363,7 +378,7 @@ func (p *RegistrationPage) handleRegister() {
 				p.statusMessage = fmt.Sprintf("Erro no cadastro: %v", opErr)
 				p.messageColor = theme.Colors.Danger
 				appLogger.Errorf("Erro ao cadastrar usuário '%s': %v", ud.Username, opErr)
-				// Tentar mostrar erro no campo específico, se possível
+				// Tenta atribuir erro ao campo específico se for ValidationError.
 				if valErr, ok := opErr.(*appErrors.ValidationError); ok {
 					if msg, found := valErr.Fields["username"]; found {
 						p.usernameFeedback = msg
@@ -374,22 +389,29 @@ func (p *RegistrationPage) handleRegister() {
 					if msg, found := valErr.Fields["password"]; found {
 						p.passwordFeedback = msg
 					}
-				} else if errors.Is(opErr, appErrors.ErrConflict) {
-					if strings.Contains(opErr.Error(), "usuário") {
+				} else if errors.Is(opErr, appErrors.ErrConflict) { // Conflito de username ou email
+					if strings.Contains(strings.ToLower(opErr.Error()), "usuário") {
 						p.usernameFeedback = opErr.Error()
-					}
-					if strings.Contains(opErr.Error(), "e-mail") {
+					} else if strings.Contains(strings.ToLower(opErr.Error()), "e-mail") {
 						p.emailFeedback = opErr.Error()
+					} else {
+						// Erro de conflito genérico
 					}
 				}
 			} else {
 				appLogger.Infof(successMsg)
-				//p.statusMessage = successMsg
-				//p.messageColor = theme.Colors.Success
-				//p.resetForm()
-				// Navegar para login após sucesso
-				p.router.GetAppWindow().ShowGlobalMessage("Cadastro Realizado", successMsg, false) // Supondo ShowGlobalMessage
-				p.router.NavigateTo(ui.PageLogin, successMsg)
+				// Limpa formulário e navega para login com mensagem de sucesso.
+				p.resetForm()
+				targetPage := ui.PageLogin
+				successParam := successMsg
+				if adminSess != nil { // Se admin criou, volta para a página de admin e mostra mensagem lá.
+					targetPage = ui.PageAdminPermissions
+					p.router.GetAppWindow().ShowGlobalMessage("Sucesso", successMsg, true, 5*time.Second)
+					successParam = "" // Não passa para AdminPermissionsPage
+				} else {
+					p.router.GetAppWindow().ShowGlobalMessage("Cadastro Realizado", successMsg, true, 5*time.Second)
+				}
+				p.router.NavigateTo(targetPage, successParam)
 			}
 			p.router.GetAppWindow().Invalidate()
 		})

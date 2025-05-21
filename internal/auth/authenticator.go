@@ -1,20 +1,22 @@
 package auth
 
 import (
-	"database/sql" // Para sql.NullTime se usar ponteiros para time.Time
+	"database/sql" // Mantido para referência, embora *time.Time seja mais usado com GORM para nulidade.
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm" // Adicionado para aceitar *gorm.DB
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // Alias para evitar conflito
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/repositories"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui" // Para ui.PageID
 	"github.com/sirupsen/logrus"
 )
 
@@ -22,39 +24,33 @@ import (
 type AuthResult struct {
 	Success    bool
 	Message    string
-	SessionID  string             // ID da sessão criada em caso de sucesso
-	UserData   *models.UserPublic // Dados públicos do usuário
-	RedirectTo ui.PageID          // Opcional: para onde redirecionar na UI
+	SessionID  string
+	UserData   *models.UserPublic
+	RedirectTo ui.PageID // Opcional: para onde redirecionar na UI
 }
 
-// Authenticator define a interface para operações de autenticação.
-// Isso permite testar e mockar mais facilmente.
+// AuthenticatorInterface define a interface para operações de autenticação.
 type AuthenticatorInterface interface {
 	AuthenticateUser(username, password, ipAddress, userAgent string) (*AuthResult, error)
 	LogoutUser(sessionID string) error
-	// Outros métodos relacionados à autenticação poderiam ir aqui
 }
 
 // authenticatorImpl implementa AuthenticatorInterface.
 type authenticatorImpl struct {
 	cfg             *core.Config
-	userRepo        repositories.UserRepository // Interface do repositório de usuário
-	sessionManager  *SessionManager             // Gerenciador de sessão concreto
-	auditLogService services.AuditLogService    // Interface do serviço de log de auditoria
+	userRepo        repositories.UserRepository
+	sessionManager  *SessionManager
+	auditLogService services.AuditLogService
 }
 
 // NewAuthenticator cria uma nova instância do Authenticator.
-// Nota: db *sql.DB é passado aqui para que o authenticator possa criar transações se necessário,
-// ou pode ser que os repositórios e o sessionManager já lidem com suas próprias conexões/transações.
-// Se você estiver usando um ORM, você passaria a instância do ORM (ex: *gorm.DB).
 func NewAuthenticator(
 	cfg *core.Config,
-	db *sql.DB, // Ou seu tipo de conexão ORM
+	db *gorm.DB, // Alterado para *gorm.DB
 	sessionManager *SessionManager,
 	auditLogService services.AuditLogService,
 ) AuthenticatorInterface {
-	// Dentro do NewAuthenticator, você instancia os repositórios concretos
-	userRepo := repositories.NewSQLUserRepository(db) // Ou NewGORMUserRepository(db), etc.
+	userRepo := repositories.NewGormUserRepository(db) // Alterado para NewGormUserRepository
 
 	return &authenticatorImpl{
 		cfg:             cfg,
@@ -83,12 +79,14 @@ func VerifyPassword(plainPassword, hashedPassword string) bool {
 		return false
 	}
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(plainPassword))
+	// Log detalhado sobre o resultado da comparação de senha
 	if err == nil {
 		appLogger.Debug("Verificação de senha (bcrypt.CompareHashAndPassword) bem-sucedida.")
 	} else if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
 		appLogger.Debug("Verificação de senha (bcrypt.CompareHashAndPassword) falhou: hash e senha não correspondem.")
 	} else {
-		appLogger.Warnf("Erro inesperado durante verifyPassword (bcrypt.CompareHashAndPassword): %v. Hash recebido: '%s'", err, hashedPassword)
+		// Este log é importante para diagnosticar problemas com hashes inválidos
+		appLogger.Warnf("Erro inesperado durante verifyPassword (bcrypt.CompareHashAndPassword): %v. Hash recebido: '%s', Comprimento da Senha: %d", err, hashedPassword, len(plainPassword))
 	}
 	return err == nil
 }
@@ -109,24 +107,24 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 	}
 
 	// 1. Buscar usuário
-	user, err := a.userRepo.GetByUsernameOrEmail(normalizedInput) // Este método precisa ser implementado no repo
+	user, err := a.userRepo.GetByUsernameOrEmail(normalizedInput)
 	if err != nil {
 		if errors.Is(err, appErrors.ErrNotFound) {
 			logCtx.Warn("Usuário não encontrado no banco de dados.")
-			a.auditLogService.LogAction(models.AuditLogEntry{ // Supondo que LogAction aceite um struct
+			a.auditLogService.LogAction(models.AuditLogEntry{
 				Action:      "LOGIN_FAILED_USER_NOT_FOUND",
 				Description: fmt.Sprintf("Tentativa de login para usuário inexistente: %s", normalizedInput),
 				Severity:    "WARNING",
-				Username:    "system", // Ou o próprio input se quiser registrar
+				Username:    normalizedInput, // Registra o input como username
 				IPAddress:   &ipAddress,
 				Metadata:    map[string]interface{}{"input": normalizedInput, "ip": ipAddress, "agent": userAgent},
-			})
-			return &AuthResult{Success: false, Message: "Usuário ou Senha inválidos."}, nil // Mensagem genérica
+			}, nil) // Passa nil para userSession pois não há sessão de usuário ainda
+			return &AuthResult{Success: false, Message: "Usuário ou Senha inválidos."}, nil
 		}
 		logCtx.Errorf("Erro ao buscar usuário: %v", err)
 		return nil, fmt.Errorf("%w: falha ao verificar usuário", appErrors.ErrDatabase)
 	}
-	logCtx = logCtx.WithField("userID", user.ID.String()) // Adiciona userID ao contexto do log
+	logCtx = logCtx.WithField("userID", user.ID.String())
 
 	// 2. Verificar se a conta está ativa
 	if !user.Active {
@@ -139,7 +137,7 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 			UserID:      &user.ID,
 			IPAddress:   &ipAddress,
 			Metadata:    map[string]interface{}{"user_id": user.ID.String(), "ip": ipAddress, "agent": userAgent},
-		})
+		}, nil)
 		return &AuthResult{Success: false, Message: "Conta de usuário desativada."}, nil
 	}
 
@@ -158,28 +156,25 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 				UserID:      &user.ID,
 				IPAddress:   &ipAddress,
 				Metadata:    map[string]interface{}{"user_id": user.ID.String(), "remaining_lockout_sec": remainingLockout.Seconds()},
-			})
+			}, nil)
 			return &AuthResult{Success: false, Message: fmt.Sprintf("Conta temporariamente bloqueada. Tente novamente em %d minutos.", int(remainingLockout.Minutes())+1)}, nil
 		}
-		// Bloqueio expirou, resetar tentativas
 		logCtx.Info("Bloqueio de conta expirado. Resetando tentativas.")
 		user.FailedAttempts = 0
-		user.LastFailedLogin = nil // sql.NullTime{Valid: false}
+		user.LastFailedLogin = nil
 		if err := a.userRepo.UpdateLoginAttempts(user.ID, user.FailedAttempts, user.LastFailedLogin, nil); err != nil {
 			logCtx.Errorf("Erro (não fatal) ao resetar tentativas no desbloqueio: %v", err)
-			// Continuar mesmo assim
 		}
 	}
 
 	// 4. Verificar senha
 	if !VerifyPassword(password, user.PasswordHash) {
 		user.FailedAttempts++
-		failedLoginTime := now // sql.NullTime{Time: now, Valid: true}
+		failedLoginTime := now
 		user.LastFailedLogin = &failedLoginTime
 
 		if err := a.userRepo.UpdateLoginAttempts(user.ID, user.FailedAttempts, user.LastFailedLogin, nil); err != nil {
 			logCtx.Errorf("Erro (não fatal) ao atualizar tentativas de login falhas: %v", err)
-			// Considerar se isso deve impedir o login ou apenas ser logado
 		}
 
 		logCtx.Warnf("Senha inválida. Tentativa %d/%d.", user.FailedAttempts, a.cfg.MaxLoginAttempts)
@@ -191,7 +186,7 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 			UserID:      &user.ID,
 			IPAddress:   &ipAddress,
 			Metadata:    map[string]interface{}{"user_id": user.ID.String(), "attempt": user.FailedAttempts},
-		})
+		}, nil)
 
 		if user.FailedAttempts >= a.cfg.MaxLoginAttempts {
 			logCtx.Warn("Conta bloqueada após múltiplas tentativas falhas.")
@@ -203,7 +198,7 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 				UserID:      &user.ID,
 				IPAddress:   &ipAddress,
 				Metadata:    map[string]interface{}{"user_id": user.ID.String(), "attempts": user.FailedAttempts},
-			})
+			}, nil)
 			return &AuthResult{Success: false, Message: "Senha incorreta. Conta bloqueada após múltiplas tentativas."}, nil
 		}
 		return &AuthResult{Success: false, Message: fmt.Sprintf("Usuário ou Senha inválidos. Tentativas restantes: %d", a.cfg.MaxLoginAttempts-user.FailedAttempts)}, nil
@@ -211,19 +206,18 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 
 	// 5. Login bem-sucedido
 	logCtx.Info("Login bem-sucedido.")
-	lastLoginTime := now //sql.NullTime{Time: now, Valid: true}
+	lastLoginTime := now
 	user.LastLogin = &lastLoginTime
 	user.FailedAttempts = 0
-	user.LastFailedLogin = nil //sql.NullTime{Valid: false}
+	user.LastFailedLogin = nil
 
 	if err := a.userRepo.UpdateLoginAttempts(user.ID, user.FailedAttempts, user.LastFailedLogin, user.LastLogin); err != nil {
 		logCtx.Errorf("Erro (não fatal) ao atualizar último login e resetar falhas: %v", err)
-		// Não impedir o login por isso, mas é importante logar.
 	}
 
 	// 6. Criar sessão
-	// Os roles devem ser carregados pelo userRepo.GetByUsernameOrEmail ou por uma chamada separada aqui.
-	// Supondo que user.Roles (tipo []*models.DBRole) já está populado.
+	// Os roles devem ser carregados pelo userRepo.GetByUsernameOrEmail ou por uma chamada separada.
+	// O método GetByUsernameOrEmail do gormUserRepository já faz Preload("Roles").
 	roleNames := make([]string, len(user.Roles))
 	for i, role := range user.Roles {
 		roleNames[i] = role.Name
@@ -238,7 +232,6 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 		CreatedAt:    now,
 		LastActivity: now,
 		ExpiresAt:    now.Add(a.cfg.SessionTimeout),
-		// Metadata:     make(map[string]interface{}), // Inicializar se necessário
 	}
 	sessionID, err := a.sessionManager.CreateSession(sessionData)
 	if err != nil {
@@ -249,11 +242,16 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 			Severity:    "CRITICAL",
 			Username:    user.Username,
 			UserID:      &user.ID,
+			IPAddress:   &ipAddress,
 			Metadata:    map[string]interface{}{"user_id": user.ID.String(), "error": err.Error()},
-		})
+		}, nil)
 		return nil, fmt.Errorf("%w: erro interno ao iniciar sessão do usuário", appErrors.ErrInternal)
 	}
 	logCtx.Infof("Sessão criada com ID: %s", sessionID)
+
+	// Criar uma SessionData para o log de auditoria de LOGIN_SUCCESS
+	currentLoginSessionData := sessionData // Copia os dados da sessão recém-criada
+	currentLoginSessionData.ID = sessionID  // Adiciona o ID da sessão
 
 	a.auditLogService.LogAction(models.AuditLogEntry{
 		Action:      "LOGIN_SUCCESS",
@@ -263,9 +261,8 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 		UserID:      &user.ID,
 		IPAddress:   &ipAddress,
 		Metadata:    map[string]interface{}{"user_id": user.ID.String(), "session_id_prefix": sessionID[:8]},
-	})
+	}, ¤tLoginSessionData)
 
-	// Preparar dados públicos do usuário
 	userPublicData := &models.UserPublic{
 		ID:        user.ID,
 		Username:  user.Username,
@@ -282,7 +279,7 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 		Message:   "Autenticação bem-sucedida.",
 		SessionID: sessionID,
 		UserData:  userPublicData,
-		// RedirectTo: ui.PageMain, // Opcional: Para UI saber para onde ir
+		// RedirectTo: ui.PageMain, // Definido pela UI se necessário
 	}, nil
 }
 
@@ -290,31 +287,32 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 func (a *authenticatorImpl) LogoutUser(sessionID string) error {
 	session, err := a.sessionManager.GetSession(sessionID)
 	if err != nil {
-		if errors.Is(err, appErrors.ErrNotFound) {
+		if errors.Is(err, appErrors.ErrNotFound) || errors.Is(err, appErrors.ErrSessionExpired) {
 			appLogger.Warnf("Tentativa de logout para sessão inexistente/expirada: %s", sessionID)
-			// Ainda tenta remover, caso exista algum resquício
-			_ = a.sessionManager.DeleteSession(sessionID)
-			return nil // Não é um erro crítico para o chamador
+			_ = a.sessionManager.DeleteSession(sessionID) // Tenta remover resquícios
+			return nil
 		}
 		appLogger.Errorf("Erro ao obter sessão para logout (%s): %v", sessionID, err)
 		return fmt.Errorf("%w: falha ao validar sessão para logout", appErrors.ErrInternal)
 	}
 
-	err = a.sessionManager.DeleteSession(sessionID)
-	if err != nil {
-		appLogger.Errorf("Erro ao deletar sessão (%s) durante logout: %v", sessionID, err)
-		// Logar falha, mas continuar. O principal é que a sessão não seja mais validada.
-	}
-
-	appLogger.Infof("Sessão %s (Usuário: %s) removida (logout).", sessionID, session.Username)
-	userID := session.UserID // Assume que UserID está na SessionData
+	// Log de logout com os dados da sessão que está sendo encerrada
 	a.auditLogService.LogAction(models.AuditLogEntry{
 		Action:      "LOGOUT",
 		Description: fmt.Sprintf("Logout para sessão %s (usuário %s).", sessionID[:8], session.Username),
 		Severity:    "INFO",
 		Username:    session.Username,
-		UserID:      &userID,
+		UserID:      &session.UserID,
+		IPAddress:   &session.IPAddress,
+		Roles:       func() *string { s := strings.Join(session.Roles, ","); return &s }(),
 		Metadata:    map[string]interface{}{"session_id_prefix": sessionID[:8]},
-	})
+	}, session) // Passa a sessão atual para o log de auditoria
+
+	err = a.sessionManager.DeleteSession(sessionID)
+	if err != nil {
+		appLogger.Errorf("Erro ao deletar sessão (%s) durante logout: %v", sessionID, err)
+	}
+
+	appLogger.Infof("Sessão %s (Usuário: %s) removida (logout).", sessionID, session.Username)
 	return nil
 }

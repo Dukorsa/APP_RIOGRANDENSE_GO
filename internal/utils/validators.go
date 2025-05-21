@@ -2,49 +2,61 @@ package utils
 
 import (
 	"fmt"
-	"net" // Para validação de IP (se necessário)
+	"math"     // Para Log2 na entropia
 	"net/mail" // Para validação de email mais robusta
 	"regexp"
 	"strconv"
 	"strings"
+	"time" // Para uso em GenerateSecureRandomToken (exemplo)
 	"unicode"
 	"unicode/utf8" // Para contagem de runas (caracteres) em vez de bytes
 
-	// "github.com/go-playground/validator/v10" // Importar se usar para structs
+	// Para geração de token seguro (crypto/rand)
+	"crypto/rand"
+	"encoding/base64"
 
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // Para retornar erros customizados
-	// appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger" // Para logar falhas críticas
 )
 
 // --- Validador de CNPJ ---
 
 // IsValidCNPJ verifica se uma string de CNPJ (apenas dígitos) é válida.
+// `cnpj` deve ser uma string contendo exatamente 14 dígitos numéricos.
 func IsValidCNPJ(cnpj string) bool {
 	if len(cnpj) != 14 {
-		return false
+		return false // CNPJ deve ter 14 dígitos.
 	}
-	// Verifica se todos os dígitos são iguais (ex: "00000000000000")
-	if均DigitsEqual(cnpj) {
+	// Verifica se todos os caracteres são dígitos.
+	for _, r := range cnpj {
+		if r < '0' || r > '9' {
+			return false // Contém caracteres não numéricos.
+		}
+	}
+
+	// Verifica se todos os dígitos são iguais (ex: "00000000000000"), o que é inválido.
+	if allDigitsEqual(cnpj) {
 		return false
 	}
 
-	// Cálculo do primeiro dígito verificador
+	// Cálculo do primeiro dígito verificador.
 	sum := 0
 	weights1 := []int{5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}
 	for i := 0; i < 12; i++ {
-		digit, _ := strconv.Atoi(string(cnpj[i]))
+		digit, _ := strconv.Atoi(string(cnpj[i])) // Erro de Atoi é ignorado pois já validamos que são dígitos.
 		sum += digit * weights1[i]
 	}
 	remainder := sum % 11
-	digit1 := 0
+	expectedDigit1 := 0
 	if remainder >= 2 {
-		digit1 = 11 - remainder
+		expectedDigit1 = 11 - remainder
 	}
-	if strconv.Itoa(digit1) != string(cnpj[12]) {
+	actualDigit1, _ := strconv.Atoi(string(cnpj[12]))
+	if expectedDigit1 != actualDigit1 {
 		return false
 	}
 
-	// Cálculo do segundo dígito verificador
+	// Cálculo do segundo dígito verificador.
 	sum = 0
 	weights2 := []int{6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}
 	for i := 0; i < 13; i++ {
@@ -52,17 +64,18 @@ func IsValidCNPJ(cnpj string) bool {
 		sum += digit * weights2[i]
 	}
 	remainder = sum % 11
-	digit2 := 0
+	expectedDigit2 := 0
 	if remainder >= 2 {
-		digit2 = 11 - remainder
+		expectedDigit2 = 11 - remainder
 	}
-	return strconv.Itoa(digit2) == string(cnpj[13])
+	actualDigit2, _ := strconv.Atoi(string(cnpj[13]))
+	return expectedDigit2 == actualDigit2
 }
 
-//均DigitsEqual verifica se todos os caracteres em uma string são iguais.
-func均DigitsEqual(s string) bool {
+// allDigitsEqual verifica se todos os caracteres em uma string são iguais.
+func allDigitsEqual(s string) bool {
 	if len(s) < 2 {
-		return true // Ou false, dependendo da definição
+		return true // String vazia ou com um dígito é considerada "todos iguais".
 	}
 	first := s[0]
 	for i := 1; i < len(s); i++ {
@@ -74,273 +87,319 @@ func均DigitsEqual(s string) bool {
 }
 
 // --- Validador de E-mail ---
-// Regex mais simples, para validação mais robusta, use mail.ParseAddress.
-var emailRegexSimple = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-var domainBlacklist = map[string]bool{
-	"temp-mail.org": true,
-	"example.com":   true,
-	"mailinator.com":true,
+
+// Domínios de e-mail comumente usados para fins temporários ou de teste, que podem ser bloqueados.
+var commonDisposableEmailDomains = map[string]bool{
+	"temp-mail.org":     true,
+	"10minutemail.com":  true,
+	"mailinator.com":    true,
+	"guerrillamail.com": true,
+	"throwawaymail.com": true,
+	// Adicionar outros domínios conforme necessário.
+	// "example.com":    true, // Manter example.com se for para testes internos.
 }
 
-// ValidateEmail verifica se um e-mail é válido.
-// Retorna nil se válido, ou um erro do tipo appErrors.ValidationError.
+// ValidateEmail verifica se um endereço de e-mail é válido.
+// Retorna `nil` se válido, ou um erro (potencialmente `*appErrors.ValidationError`).
 func ValidateEmail(email string) error {
-	email = strings.TrimSpace(strings.ToLower(email))
-	if email == "" {
-		return appErrors.NewValidationError("E-mail é obrigatório.", map[string]string{"email": "obrigatório"})
+	trimmedEmail := strings.TrimSpace(strings.ToLower(email)) // Normaliza para minúsculas e remove espaços.
+
+	if trimmedEmail == "" {
+		return appErrors.NewValidationError("Endereço de e-mail é obrigatório.", map[string]string{"email": "obrigatório"})
 	}
-	if len(email) > 254 {
-		return appErrors.NewValidationError("E-mail excede 254 caracteres.", map[string]string{"email": "muito longo"})
+	if len(trimmedEmail) > 254 { // Limite prático para endereços de e-mail.
+		return appErrors.NewValidationError("Endereço de e-mail excede 254 caracteres.", map[string]string{"email": "muito longo"})
 	}
 
-	// Validação de formato usando net/mail (mais robusto que regex simples)
-	addr, err := mail.ParseAddress(email)
-	if err != nil || addr.Address != email { // Checa se ParseAddress não alterou o email (ex: removendo comentários)
-		return appErrors.NewValidationError("Formato de e-mail inválido.", map[string]string{"email": "formato inválido"})
+	// Validação de formato usando `net/mail.ParseAddress` (mais robusto que regex simples).
+	addr, err := mail.ParseAddress(trimmedEmail)
+	if err != nil || addr.Address != trimmedEmail { // Checa se `ParseAddress` não alterou o e-mail (ex: removendo comentários).
+		return appErrors.NewValidationError("Formato de endereço de e-mail inválido.", map[string]string{"email": "formato inválido"})
 	}
 
-	// Validação de domínio (exemplo de blacklist)
-	parts := strings.Split(email, "@")
+	// Validação de domínio (exemplo: blacklist de domínios descartáveis).
+	parts := strings.Split(trimmedEmail, "@")
 	if len(parts) == 2 {
 		domain := strings.ToLower(parts[1])
-		if domainBlacklist[domain] {
-			return appErrors.NewValidationError("Domínio de e-mail não permitido.", map[string]string{"email": "domínio bloqueado"})
+		if commonDisposableEmailDomains[domain] {
+			return appErrors.NewValidationError("Domínio de e-mail não permitido (e-mail temporário/descartável).", map[string]string{"email": "domínio bloqueado"})
 		}
-		// Opcional: Verificação de MX record (requer consulta DNS, pode ser lento)
+		// Opcional: Verificação de MX record (requer consulta DNS, pode ser lento e sujeito a falhas de rede).
+		// Atualmente desabilitado para manter o validador síncrono e rápido.
 		// _, mxErr := net.LookupMX(domain)
 		// if mxErr != nil {
 		// 	 if dnsErr, ok := mxErr.(*net.DNSError); ok && dnsErr.IsNotFound {
-		// 		 return appErrors.NewValidationError("Domínio de e-mail não encontrado (sem MX records).", map[string]string{"email": "domínio inexistente"})
+		// 		 return appErrors.NewValidationError("Domínio de e-mail não encontrado (sem registros MX).", map[string]string{"email": "domínio inexistente"})
 		// 	 }
-		// 	 appLogger.Warnf("Erro ao verificar MX record para %s: %v", domain, mxErr)
-		// 	 // Decidir se falha ou permite em caso de erro na consulta DNS
+		// 	 appLogger.Warnf("Erro ao verificar MX record para o domínio '%s' (e-mail: '%s'): %v", domain, trimmedEmail, mxErr)
+		// 	 // Decidir se falha ou permite em caso de erro na consulta DNS. Para validação de cadastro, pode ser mais permissivo aqui.
 		// }
-	} else { // Não deveria acontecer se mail.ParseAddress passou
-		return appErrors.NewValidationError("Formato de e-mail inválido (sem @).", map[string]string{"email": "formato inválido"})
+	} else { // Não deveria acontecer se `mail.ParseAddress` passou.
+		return appErrors.NewValidationError("Formato de endereço de e-mail inválido (ausente '@' ou estrutura incorreta).", map[string]string{"email": "formato inválido"})
 	}
 
-	return nil
+	return nil // E-mail considerado válido.
 }
 
 // --- Validador de Força de Senha ---
 
 // PasswordStrengthResult contém os resultados da validação de força da senha.
 type PasswordStrengthResult struct {
-	IsValid          bool    `json:"is_valid"`
-	Length           bool    `json:"length"`
-	Uppercase        bool    `json:"uppercase"`
-	Lowercase        bool    `json:"lowercase"`
-	Digit            bool    `json:"digit"`
-	SpecialChar      bool    `json:"special_char"`
-	NotCommonPassword bool    `json:"not_common_password"` // True se NÃO for comum
-	Entropy          float64 `json:"entropy"`
-	MinLengthRequired int    `json:"min_length_required"`
+	IsValid           bool    `json:"is_valid"`            // True se todos os critérios de força forem atendidos.
+	Length            bool    `json:"length_ok"`           // True se o comprimento mínimo for atendido.
+	HasUppercase      bool    `json:"has_uppercase"`       // True se contém letra maiúscula.
+	HasLowercase      bool    `json:"has_lowercase"`       // True se contém letra minúscula.
+	HasDigit          bool    `json:"has_digit"`           // True se contém número.
+	HasSpecialChar    bool    `json:"has_special_char"`    // True se contém caractere especial.
+	IsNotCommon       bool    `json:"is_not_common"`       // True se NÃO for uma senha comum/fraca conhecida.
+	Entropy           float64 `json:"entropy_bits"`        // Estimativa de entropia da senha em bits.
+	MinLengthRequired int     `json:"min_length_required"` // Comprimento mínimo que foi exigido.
 }
 
-// GetErrorDetailsList retorna uma lista de strings descrevendo as falhas de validação.
+// GetErrorDetailsList retorna uma lista de strings descrevendo as falhas de validação de força da senha.
 func (psr *PasswordStrengthResult) GetErrorDetailsList() []string {
 	var details []string
-	if !psr.IsValid { // Só adiciona detalhes se a senha geral for inválida
-		if !psr.Length {
-			details = append(details, fmt.Sprintf("comprimento mínimo de %d caracteres", psr.MinLengthRequired))
-		}
-		if !psr.Uppercase {
-			details = append(details, "letra maiúscula")
-		}
-		if !psr.Lowercase {
-			details = append(details, "letra minúscula")
-		}
-		if !psr.Digit {
-			details = append(details, "número")
-		}
-		if !psr.SpecialChar {
-			details = append(details, "caractere especial")
-		}
-		if !psr.NotCommonPassword {
-			details = append(details, "senha muito comum")
-		}
-		// Poderia adicionar um critério de entropia mínima se desejado
-		// if psr.Entropy < minEntropyRequired { details = append(details, "entropia insuficiente") }
+	if psr.IsValid {
+		return details
+	} // Se válida, não há detalhes de erro.
+
+	if !psr.Length {
+		details = append(details, fmt.Sprintf("deve ter pelo menos %d caracteres", psr.MinLengthRequired))
 	}
+	if !psr.HasUppercase {
+		details = append(details, "deve conter pelo menos uma letra maiúscula (A-Z)")
+	}
+	if !psr.HasLowercase {
+		details = append(details, "deve conter pelo menos uma letra minúscula (a-z)")
+	}
+	if !psr.HasDigit {
+		details = append(details, "deve conter pelo menos um número (0-9)")
+	}
+	if !psr.HasSpecialChar {
+		details = append(details, "deve conter pelo menos um caractere especial (ex: !@#$%)")
+	}
+	if !psr.IsNotCommon {
+		details = append(details, "senha muito comum ou fácil de adivinhar")
+	}
+	// Pode-se adicionar um critério de entropia mínima se desejado.
+	// Ex: if psr.Entropy < 60 { details = append(details, "complexidade (entropia) insuficiente") }
 	return details
 }
 
-
-var commonPasswords = map[string]bool{ // Usar map para lookup O(1)
-	"password": true, "123456": true, "qwerty": true, "admin": true, "welcome": true,
-	"senha123": true, "12345678": true, "abc123": true, "password123": true,
-	"admin123": true, "111111": true, "123123": true, "dragon": true, "monkey": true,
+// Lista de senhas comuns (muito pequena, para exemplo).
+// Em um sistema real, usar uma biblioteca ou serviço para checagem de senhas comprometidas (ex: Pwned Passwords).
+var commonPasswordsList = map[string]bool{
+	"password": true, "123456": true, "qwerty": true, "admin": true, "welcome": true, "senha123": true,
+	"12345678": true, "abc123": true, "password123": true, "admin123": true, "111111": true,
 }
 
-// ValidatePasswordStrength verifica a força de uma senha.
+// ValidatePasswordStrength verifica a força de uma senha com base em critérios comuns.
+// `minLength` é o comprimento mínimo exigido.
 func ValidatePasswordStrength(password string, minLength int) PasswordStrengthResult {
-	res := PasswordStrengthResult{MinLengthRequired: minLength}
+	res := PasswordStrengthResult{MinLengthRequired: minLength, IsNotCommon: true} // Assume que não é comum inicialmente.
 
-	if password == "" { // Senha vazia falha em tudo
+	if password == "" { // Senha vazia falha em todos os critérios.
 		res.IsValid = false
 		return res
 	}
 
-	res.Length = utf8.RuneCountInString(password) >= minLength // Usa RuneCount para caracteres Unicode
-	res.NotCommonPassword = !commonPasswords[strings.ToLower(password)]
+	// Comprimento (usando contagem de runas para caracteres Unicode).
+	res.Length = utf8.RuneCountInString(password) >= minLength
 
-	var charsetSize float64
+	// Checagem de senha comum (case-insensitive).
+	if commonPasswordsList[strings.ToLower(password)] {
+		res.IsNotCommon = false
+	}
+
+	// Contagem de tipos de caracteres e cálculo de entropia.
+	var charsetSize float64 = 0
+	charsetsFound := 0
+
 	for _, char := range password {
-		switch {
-		case unicode.IsUpper(char):
-			res.Uppercase = true
-		case unicode.IsLower(char):
-			res.Lowercase = true
-		case unicode.IsDigit(char):
-			res.Digit = true
-		// Definir caracteres especiais explicitamente, pois unicode.IsSymbol/IsPunct é muito amplo
-		case strings.ContainsRune("!@#$%^&*(),.?\":{}|<>~`[]\\;',./_+-=", char):
-			res.SpecialChar = true
+		if unicode.IsUpper(char) && !res.HasUppercase {
+			res.HasUppercase = true
+			charsetSize += 26
+			charsetsFound++
+		} else if unicode.IsLower(char) && !res.HasLowercase {
+			res.HasLowercase = true
+			charsetSize += 26
+			charsetsFound++
+		} else if unicode.IsDigit(char) && !res.HasDigit {
+			res.HasDigit = true
+			charsetSize += 10
+			charsetsFound++
+		} else if strings.ContainsRune("!@#$%^&*()_+-=[]{};':\",./<>?|\\`~", char) && !res.HasSpecialChar {
+			// Define um conjunto de caracteres especiais considerados.
+			res.HasSpecialChar = true
+			charsetSize += 32
+			charsetsFound++ // Tamanho aproximado do conjunto de especiais.
 		}
 	}
 
-	if res.Lowercase { charsetSize += 26 }
-	if res.Uppercase { charsetSize += 26 }
-	if res.Digit { charsetSize += 10 }
-	if res.SpecialChar { charsetSize += 32 } // Aproximação do número de especiais comuns
-
+	// Cálculo de Entropia de Shannon (simplificado): H = L * log2(N)
+	// L = comprimento da senha, N = tamanho do conjunto de caracteres possíveis.
+	// Esta é uma estimativa e pode não ser perfeitamente precisa.
 	if charsetSize > 0 && len(password) > 0 {
-		// Entropia de Shannon: H = L * log2(N)
-		// Onde L é o comprimento da senha e N é o tamanho do conjunto de caracteres possíveis.
-		// Esta é uma simplificação, pois assume que os caracteres são independentes e uniformemente distribuídos.
-		// Mas é uma métrica comum.
-		// res.Entropy = float64(utf8.RuneCountInString(password)) * math.Log2(charsetSize)
-
-		// Para ser mais simples, podemos usar o cálculo do Python, que parecia ser um score e não entropia real.
-		// Vamos calcular um "score de diversidade"
-		diversityScore := 0
-		if res.Lowercase { diversityScore++ }
-		if res.Uppercase { diversityScore++ }
-		if res.Digit { diversityScore++ }
-		if res.SpecialChar { diversityScore++ }
-		// Atribuir entropia com base no score de diversidade e comprimento (muito simplificado)
-		res.Entropy = float64(utf8.RuneCountInString(password) * diversityScore * 5) // Ajustar multiplicador
+		res.Entropy = float64(utf8.RuneCountInString(password)) * math.Log2(charsetSize)
 	} else {
 		res.Entropy = 0
 	}
-	
-	// A versão Python usava uma entropia mínima de 60 bits.
-	// Vamos definir a validade com base nos critérios individuais por enquanto.
-	res.IsValid = res.Length && res.Uppercase && res.Lowercase && res.Digit && res.SpecialChar && res.NotCommonPassword
-	// Adicionar checagem de entropia se quiser: && res.Entropy >= 60.0
+
+	// Define a validade geral da senha com base nos critérios.
+	// Uma política comum é exigir pelo menos 3 dos 4 tipos de caracteres (maiúscula, minúscula, dígito, especial).
+	// Ou definir um threshold de entropia.
+	// Exemplo de política: Comprimento + 3 de 4 tipos de caracteres + Não ser comum.
+	criteriaMetCount := 0
+	if res.HasUppercase {
+		criteriaMetCount++
+	}
+	if res.HasLowercase {
+		criteriaMetCount++
+	}
+	if res.HasDigit {
+		criteriaMetCount++
+	}
+	if res.HasSpecialChar {
+		criteriaMetCount++
+	}
+
+	// Política de exemplo: Comprimento OK, Não Comum, e pelo menos 3 dos 4 critérios de caracteres.
+	res.IsValid = res.Length && res.IsNotCommon && (criteriaMetCount >= 3)
+	// Adicionar checagem de entropia se desejar: && res.Entropy >= 60.0 (exemplo de threshold)
 
 	return res
 }
 
+// --- Validadores para Nomes (Network, Role, Username) ---
+// Regex para nomes: letras (Unicode), números, underscore, hífen.
+// Ajustar {min,max} conforme necessário para cada tipo de nome.
+var generalNameRegex = func(min, max int) *regexp.Regexp {
+	return regexp.MustCompile(fmt.Sprintf(`^[\p{L}\d_-]{%d,%d}$`, min, max))
+}
+var (
+	networkNameValidationRegex = generalNameRegex(3, 50)
+	roleNameValidationRegex    = generalNameRegex(3, 50)
+	usernameValidationRegex    = generalNameRegex(3, 50)
+)
 
-// --- Validadores para Network ---
-// Regex permite letras (incluindo acentuadas com \p{L}), números, espaços, hífen, underscore.
-var networkNameRegex = regexp.MustCompile(`^[\p{L}\d\s_-]{3,50}$`)
-// Permite letras (incluindo acentuadas), espaços, ponto, hífen.
-var buyerNameRegex = regexp.MustCompile(`^[\p{L}\s.-]{5,100}$`)
+// Regex para nome do comprador: letras (Unicode), espaços, ponto, hífen.
+var buyerNameValidationRegex = regexp.MustCompile(`^[\p{L}\s.-]{2,100}$`) // Mínimo de 2 caracteres.
 
 // IsValidNetworkName valida o nome da rede.
 func IsValidNetworkName(name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" { return false }
-	return networkNameRegex.MatchString(name)
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
+		return false
+	}
+	return networkNameValidationRegex.MatchString(trimmedName)
 }
 
 // IsValidBuyerName valida o nome do comprador.
+// Adiciona uma checagem simples de ter pelo menos duas "palavras" (nomes).
 func IsValidBuyerName(buyer string) bool {
-	buyer = strings.TrimSpace(buyer)
-	if buyer == "" { return false }
-	// A validação de "pelo menos nome e sobrenome" do Python é mais complexa (contar palavras).
-	// Aqui, apenas o formato regex.
-	if len(strings.Fields(buyer)) < 2 { // Checa se tem pelo menos duas "palavras"
+	trimmedBuyer := strings.TrimSpace(buyer)
+	if trimmedBuyer == "" {
 		return false
 	}
-	return buyerNameRegex.MatchString(buyer)
+	if len(strings.Fields(trimmedBuyer)) < 2 { // Exige pelo menos duas palavras (ex: Nome Sobrenome).
+		return false
+	}
+	return buyerNameValidationRegex.MatchString(trimmedBuyer)
 }
 
-// --- Validador para Nome de Role ---
-var roleNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_]{3,50}$`)
-
-// IsValidRoleName valida o nome do role.
+// IsValidRoleName valida o nome do role (perfil).
 func IsValidRoleName(name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" { return false }
-	return roleNameRegex.MatchString(name)
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
+		return false
+	}
+	return roleNameValidationRegex.MatchString(trimmedName)
 }
 
-// --- Validador para Username ---
-var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,50}$`)
-
-// IsValidUsernameFormat valida o formato do nome de usuário.
+// IsValidUsernameFormat valida o formato do nome de usuário (login).
 func IsValidUsernameFormat(username string) bool {
-	username = strings.TrimSpace(username)
-	if username == "" { return false }
-	return usernameRegex.MatchString(username)
+	trimmedUsername := strings.TrimSpace(username)
+	if trimmedUsername == "" {
+		return false
+	}
+	return usernameValidationRegex.MatchString(trimmedUsername)
 }
 
+// --- Funções de Sanitização e Geração de Token ---
 
-// --- Funções de Sanitização (Exemplo) ---
-// SQL_KEYWORDS do Python é extenso. Para Go, uma abordagem mais simples ou
-// o uso de prepared statements (parâmetros de query) é a defesa primária contra SQL Injection.
-
-// SanitizeInput remove caracteres de controle (exceto espaços comuns) e stripping básico.
-// Esta é uma sanitização MUITO básica. Para HTML, use html.EscapeString.
-// Para SQL, use SEMPRE prepared statements/queries parametrizadas.
+// SanitizeInput remove caracteres de controle (exceto espaços comuns como tab, newline)
+// e normaliza múltiplos espaços para um único espaço.
+// Esta é uma sanitização MUITO BÁSICA. Para HTML, use `html.EscapeString`.
+// Para SQL, SEMPRE use prepared statements/queries parametrizadas.
 func SanitizeInput(inputStr string) string {
 	if inputStr == "" {
 		return ""
 	}
-	// Remove caracteres de controle, exceto tab, newline, carriage return
-	// e substitui múltiplos espaços por um único.
+
 	var sb strings.Builder
-	lastWasSpace := false
+	lastCharWasSpace := false
 	for _, r := range inputStr {
-		if unicode.IsControl(r) && r != '\t' && r != '\n' && r != '\r' {
-			continue // Pula outros caracteres de controle
-		}
-		if unicode.IsSpace(r) {
-			if !lastWasSpace {
-				sb.WriteRune(' ') // Adiciona um único espaço
-				lastWasSpace = true
+		// Mantém caracteres imprimíveis e espaços comuns.
+		if unicode.IsPrint(r) || r == '\t' || r == '\n' || r == '\r' {
+			if unicode.IsSpace(r) { // Trata todos os tipos de espaço.
+				if !lastCharWasSpace {
+					sb.WriteRune(' ') // Adiciona um único espaço para sequências de espaços.
+				}
+				lastCharWasSpace = true
+			} else {
+				sb.WriteRune(r)
+				lastCharWasSpace = false
 			}
-		} else {
-			sb.WriteRune(r)
-			lastWasSpace = false
 		}
+		// Outros caracteres de controle são pulados (removidos).
 	}
-	return strings.TrimSpace(sb.String())
+	return strings.TrimSpace(sb.String()) // Trim final para remover espaços nas extremidades.
 }
 
-// GenerateSecureRandomToken gera um token string seguro (URL-safe).
+// GenerateSecureRandomToken gera um token string seguro (URL-safe) com o comprimento especificado.
+// Usa `crypto/rand` para bytes aleatórios e codificação Base64 URL-safe.
 func GenerateSecureRandomToken(length int) string {
-    // Para gerar um token string, podemos usar crypto/rand para bytes e depois codificar.
-    // Exemplo: base64 URL-safe
-    // import "crypto/rand"
-    // import "encoding/base64"
-    
-    numBytes := length // Cada byte do rand pode gerar ~1.3 caracteres base64
-    if length < 24 { numBytes = 24 } // Garante bytes suficientes para um token razoável
+	// O número de bytes aleatórios necessários para gerar uma string Base64 de `length`.
+	// Cada 3 bytes de dados binários se tornam 4 caracteres Base64.
+	// Então, `numBytes = (length * 3) / 4` arredondado para cima.
+	// Ou, mais simples, use `length` para os bytes e corte a string Base64 se for maior.
+	// Para um token de 32 caracteres, 24 bytes são suficientes (24 * 4/3 = 32).
+	// Para um de 64 caracteres, 48 bytes (48 * 4/3 = 64).
+	// Vamos usar uma regra simples: `numBytes = (length * 6) / 8` (aproximadamente).
+	// Ou, mais seguro, `numBytes = length` e depois cortar a string Base64.
+	// Para garantir aleatoriedade suficiente, usamos `length` como número de bytes se for razoável.
+	numBytes := length
+	if numBytes < 24 {
+		numBytes = 24
+	} // Mínimo de bytes para um bom token.
+	if numBytes > 64 {
+		numBytes = 64
+	} // Limita para não gerar tokens excessivamente longos por engano.
 
-    b := make([]byte, numBytes)
-    if _, err := rand.Read(b); err != nil {
-        // Fallback MUITO simples se crypto/rand falhar (altamente improvável)
-        // EM PRODUÇÃO: Trate este erro seriamente ou use um UUID.
-        appLogger.Errorf("Falha crítica ao gerar bytes aleatórios para token: %v. Usando fallback.", err)
-        timestamp := time.Now().UnixNano()
-        fallback := fmt.Sprintf("fallback_%x_%x", timestamp, timestamp/int64(length+1))
-        if len(fallback) > length { return fallback[:length] }
-        return fallback
-    }
-    token := base64.URLEncoding.EncodeToString(b)
-    // Remover padding '=' e cortar no tamanho desejado (base64 pode ser maior)
-    token = strings.ReplaceAll(token, "=", "")
-    if len(token) > length {
-        return token[:length]
-    }
-    // Se for menor (improvável com numBytes suficiente), pode precisar preencher ou usar o token inteiro.
-    return token
+	b := make([]byte, numBytes)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback MUITO simples se crypto/rand falhar (altamente improvável, mas crítico).
+		// EM PRODUÇÃO: Trate este erro seriamente, logue como CRÍTICO, e talvez pare a aplicação
+		// ou use um UUID como fallback mais robusto.
+		appLogger.Errorf("Falha CRÍTICA ao gerar bytes aleatórios para token: %v. Usando fallback baseado em timestamp (NÃO SEGURO).", err)
+		timestamp := time.Now().UnixNano()
+		// Este fallback não é criptograficamente seguro.
+		fallbackToken := fmt.Sprintf("fallback_%x_%x", timestamp, timestamp/int64(numBytes+1))
+		if len(fallbackToken) > length {
+			return fallbackToken[:length]
+		}
+		return fallbackToken
+	}
+
+	// Codifica os bytes aleatórios para Base64 URL-safe (sem padding).
+	token := base64.RawURLEncoding.EncodeToString(b)
+
+	// Corta a string do token para o comprimento desejado, se necessário.
+	if len(token) > length {
+		return token[:length]
+	}
+	// Se a string gerada for menor que `length` (improvável com `numBytes` suficiente),
+	// pode-se preencher com caracteres aleatórios adicionais ou usar o token como está.
+	// Por simplicidade, retorna o token gerado.
+	return token
 }
-
-// TODO: Implementar ou integrar com github.com/go-playground/validator/v10
-// para registrar validadores customizados (cnpj, password_strength, etc.)
-// e usá-los com tags em structs de input (ex: UserCreate, NetworkCreate).

@@ -6,54 +6,54 @@ import (
 	"math"
 	"time"
 
-	"gioui.org/f32" // Para pontos flutuantes em coordenadas
-	"gioui.org/layout"
-	"gioui.org/op"
+	"gioui.org/f32"    // Para pontos flutuantes em coordenadas
+	"gioui.org/layout" // Para layout
+	"gioui.org/op"     // Para operações de desenho
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/unit"
+	"gioui.org/unit" // Para unidades de display (dp, sp)
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/theme" // Para cores padrão
 	// appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger" // Opcional, para debug
 )
 
 const (
-	defaultSpinnerSize        = 50 // dp
-	defaultSpinnerSpeedMs     = 40
+	defaultSpinnerSize        = 50                    // dp
+	defaultSpinnerTickRate    = 30 * time.Millisecond // Taxa de atualização da animação
 	defaultSpinnerNumSegments = 8
 	defaultSpinnerSegWidth    = 6   // dp
-	defaultSpinnerSegLength   = 0.6 // % do raio
+	defaultSpinnerSegLength   = 0.6 // Proporção do raio para o comprimento do segmento
 	fadeDuration              = 250 * time.Millisecond
 )
 
+// LoadingSpinner é um widget que exibe uma animação de carregamento.
 type LoadingSpinner struct {
-	IsActive bool // Controla se a animação deve rodar
+	isActive bool // Controla se a animação de rotação deve rodar
 
-	// Configurações
-	Color         color.NRGBA
-	Size          unit.Dp // Tamanho do spinner (diâmetro)
-	Speed         time.Duration
-	TrailOpacity  bool
-	NumSegments   int
-	SegmentWidth  unit.Dp
-	SegmentLength float32 // Proporção do raio para o comprimento do segmento
+	// Configurações do Spinner
+	Color         color.NRGBA // Cor principal dos segmentos
+	Size          unit.Dp     // Diâmetro do spinner
+	NumSegments   int         // Número de segmentos no spinner
+	SegmentWidth  unit.Dp     // Largura (espessura) de cada segmento
+	SegmentLength float32     // Comprimento do segmento como proporção do raio
 
 	// Estado interno da animação
-	angle          float32 // Em graus
-	visibleOpacity float32 // 0.0 (invisível) a 1.0 (totalmente visível)
+	currentAngle   float32 // Ângulo de rotação atual em graus
+	visibleOpacity float32 // Opacidade atual do spinner (0.0 a 1.0) para fade
 
-	// Para animação de fade
-	fading        bool
-	fadeStartTime time.Time
-	fadeTarget    float32 // 0.0 ou 1.0
+	// Para animação de fade in/out
+	isFading      bool      // True se estiver atualmente em transição de fade
+	fadeStartTime time.Time // Momento em que o fade atual começou
+	fadeTarget    float32   // Opacidade alvo do fade (0.0 para fade-out, 1.0 para fade-in)
 
-	// Para animação de rotação
-	lastFrameTime time.Time
-	ticker        *time.Ticker  // Para animação contínua mesmo sem eventos da UI
-	stopTicker    chan struct{} // Para parar o ticker
+	// Para animação de rotação contínua
+	ticker     *time.Ticker  // Ticker para a animação de rotação
+	stopTicker chan struct{} // Canal para sinalizar a parada da goroutine do ticker
+	// lastFrameTime time.Time // Não é mais necessário se o incremento do ângulo for fixo
 }
 
 // NewLoadingSpinner cria um novo spinner com configurações padrão ou customizadas.
+// `spinnerColor` é opcional; se fornecido, usa a primeira cor. Caso contrário, usa a cor primária do tema.
 func NewLoadingSpinner(spinnerColor ...color.NRGBA) *LoadingSpinner {
 	c := theme.Colors.Primary // Cor padrão
 	if len(spinnerColor) > 0 {
@@ -61,60 +61,61 @@ func NewLoadingSpinner(spinnerColor ...color.NRGBA) *LoadingSpinner {
 	}
 
 	s := &LoadingSpinner{
-		IsActive: false,
+		isActive: false, // Começa inativo
 
 		Color:         c,
 		Size:          unit.Dp(defaultSpinnerSize),
-		Speed:         defaultSpinnerSpeedMs * time.Millisecond,
-		TrailOpacity:  true,
 		NumSegments:   defaultSpinnerNumSegments,
 		SegmentWidth:  unit.Dp(defaultSpinnerSegWidth),
 		SegmentLength: defaultSpinnerSegLength,
 
-		angle:          0,
+		currentAngle:   0,
 		visibleOpacity: 0.0, // Começa invisível
 		stopTicker:     make(chan struct{}),
 	}
 	return s
 }
 
-// Start ativa o spinner e inicia a animação de fade-in.
+// Start ativa o spinner, iniciando a animação de rotação e um fade-in.
+// Requer um `layout.Context` para obter o tempo atual e solicitar redesenhos.
 func (s *LoadingSpinner) Start(gtx layout.Context) {
-	if s.IsActive {
+	if s.isActive && s.fadeTarget == 1.0 && !s.isFading { // Já ativo e totalmente visível
 		return
 	}
-	s.IsActive = true
-	s.fading = true
+	s.isActive = true // Ativa a lógica de rotação
+	s.isFading = true
 	s.fadeStartTime = gtx.Now
 	s.fadeTarget = 1.0 // Fade in
 
-	// Inicia ticker para rotação contínua
+	// Inicia o ticker para rotação contínua se ainda não estiver rodando
 	if s.ticker == nil {
-		s.ticker = time.NewTicker(s.Speed) // Usa a velocidade configurada
-		s.lastFrameTime = gtx.Now
-		go s.runRotation(gtx)
+		s.ticker = time.NewTicker(defaultSpinnerTickRate)
+		// A goroutine runRotation agora é iniciada apenas uma vez e controlada por s.isActive
+		// ou pelo fechamento de s.stopTicker.
+		// A chamada para runRotation pode ser feita aqui ou no primeiro Layout quando isActive.
+		// Vamos iniciá-la aqui para garantir que a rotação comece.
+		go s.runRotationLoop(gtx) // Passa gtx inicial para solicitar primeiro frame
 	}
-	op.InvalidateOp{}.Add(gtx.Ops) // Solicita novo frame
+	op.InvalidateOp{}.Add(gtx.Ops) // Solicita um novo frame para iniciar a animação de fade
 }
 
-// Stop desativa o spinner e inicia a animação de fade-out.
+// Stop desativa o spinner, parando a rotação (eventualmente) e iniciando um fade-out.
+// Requer um `layout.Context` para o tempo e redesenho.
 func (s *LoadingSpinner) Stop(gtx layout.Context) {
-	if !s.IsActive && !s.fading { // Se já está inativo e não está fazendo fade out
+	if !s.isActive && s.fadeTarget == 0.0 && !s.isFading { // Já inativo e totalmente invisível
 		return
 	}
-	s.IsActive = false // Indica que não deve mais rodar ativamente
-	s.fading = true
+	s.isActive = false // Sinaliza para a goroutine de rotação parar (eventualmente)
+	s.isFading = true
 	s.fadeStartTime = gtx.Now
 	s.fadeTarget = 0.0 // Fade out
 
-	if s.ticker != nil {
-		// O ticker será parado pela goroutine runRotation quando s.IsActive for false
-		// ou quando s.stopTicker for fechado.
-	}
+	// O ticker será parado pela goroutine `runRotationLoop` quando `s.isActive` for false
+	// e o fade-out terminar, ou se `s.stopTicker` for fechado (em `Destroy`).
 	op.InvalidateOp{}.Add(gtx.Ops)
 }
 
-// SetVisibility controla diretamente a visibilidade com fade.
+// SetVisibility controla diretamente a visibilidade do spinner com animação de fade.
 func (s *LoadingSpinner) SetVisibility(gtx layout.Context, visible bool) {
 	if visible {
 		s.Start(gtx)
@@ -123,147 +124,160 @@ func (s *LoadingSpinner) SetVisibility(gtx layout.Context, visible bool) {
 	}
 }
 
-// runRotation é uma goroutine que atualiza o ângulo de rotação.
-func (s *LoadingSpinner) runRotation(initialGtx layout.Context) {
-	// appLogger.Debug("Goroutine de rotação do spinner iniciada.")
+// runRotationLoop é uma goroutine que atualiza o ângulo de rotação do spinner.
+// `initialGtx` é usado para solicitar o primeiro Invalidate.
+func (s *LoadingSpinner) runRotationLoop(initialGtx layout.Context) {
+	// Solicita um Invalidate para a UI principal para desenhar o estado inicial ou
+	// se o spinner foi ativado e precisa ser renderizado.
+	// A AppWindow deve fornecer uma maneira de invalidar a partir de uma goroutine.
+	// Ex: appWindowInstance.Invalidate() ou appWindowInstance.Execute(func() { op.InvalidateOp{}.Add(...) })
+	// Aqui, vamos assumir que o chamador de Start/Stop lida com a invalidação inicial.
+	// A invalidação contínua durante a animação será feita no Layout.
+
 	defer func() {
 		if s.ticker != nil {
 			s.ticker.Stop()
-			s.ticker = nil
+			s.ticker = nil // Importante para permitir que o ticker seja recriado se Start for chamado novamente
 		}
 		// appLogger.Debug("Goroutine de rotação do spinner finalizada.")
 	}()
 
+	// appLogger.Debug("Goroutine de rotação do spinner iniciada.")
 	for {
 		select {
-		case <-s.stopTicker: // Canal para forçar parada
+		case <-s.stopTicker: // Canal para forçar parada (usado em Destroy)
 			return
-		case tickTime := <-s.ticker.C:
-			if !s.IsActive && s.visibleOpacity < 0.01 { // Se parou e já está invisível
-				return // Finaliza a goroutine
+		case <-s.ticker.C: // A cada tick do temporizador
+			// Se o spinner não está mais ativo (Stop foi chamado) E já está invisível (fade-out completo),
+			// então a goroutine pode parar.
+			if !s.isActive && s.visibleOpacity < 0.01 && !s.isFading {
+				return
 			}
 
-			// Atualiza ângulo e solicita novo frame para a UI principal
-			// A atualização do ângulo é baseada no tempo real para suavidade
-			// Esta é uma forma de fazer. A outra é um incremento fixo por tick.
-			// delta := tickTime.Sub(s.lastFrameTime)
-			// s.angle += float32(delta.Seconds() * 360 / (float64(s.NumSegments) * s.Speed.Seconds() / 20)) // Ajuste a velocidade
+			// Atualiza o ângulo para a rotação.
+			// Um incremento fixo por tick resulta em velocidade constante.
+			// O valor do incremento controla a "velocidade" da rotação visual.
+			angleIncrement := float32(360.0 / float32(s.NumSegments*2)) // Ajuste este valor para mudar a velocidade.
+			s.currentAngle = float32(math.Mod(float64(s.currentAngle)+float64(angleIncrement), 360.0))
 
-			// Incremento fixo por tick (mais simples)
-			s.angle = float32(math.Mod(float64(s.angle)+float64(360.0/float32(s.NumSegments)/2.0), 360.0)) // Similar ao Python
-			// s.angle = float32(math.Mod(float64(s.angle) + 12, 360.0)) // Ou um valor fixo
-
-			s.lastFrameTime = tickTime
-
-			// Solicita um novo frame na thread da UI
-			// Isso é feito chamando Invalidate na janela ou contexto da UI
-			// O AppWindow precisaria expor um método para isso ou passar um canal.
-			// Por agora, o Layout chamará InvalidateOp se s.isActive ou s.fading.
-			// Se a janela principal puder ser acessada (não ideal diretamente daqui):
-			// if globalAppWindow != nil { globalAppWindow.Invalidate() }
+			// A invalidação para redesenhar o spinner agora é feita no método Layout
+			// se `s.isActive` ou `s.isFading` for true.
+			// Isso evita chamar Invalidate de uma goroutine diretamente na janela,
+			// o que pode ser problemático. O loop de eventos da UI cuidará disso.
 		}
 	}
 }
 
 // Layout desenha o spinner.
 func (s *LoadingSpinner) Layout(gtx layout.Context) layout.Dimensions {
-	if s.fading {
+	// Lógica de Fade In/Out
+	if s.isFading {
 		progress := float32(gtx.Now.Sub(s.fadeStartTime)) / float32(fadeDuration)
 		if progress >= 1.0 {
 			progress = 1.0
-			s.fading = false // Terminou o fade
+			s.isFading = false              // Terminou o fade
+			s.visibleOpacity = s.fadeTarget // Garante que atinja o alvo
 			if s.fadeTarget == 0.0 {
-				s.IsActive = false // Garante que está inativo após fade out
+				s.isActive = false // Garante que está logicamente inativo após fade out completo
 			}
-		}
-		if s.fadeTarget == 1.0 { // Fade in
-			s.visibleOpacity = progress
-		} else { // Fade out
-			s.visibleOpacity = 1.0 - progress
+		} else {
+			if s.fadeTarget == 1.0 { // Fade in
+				s.visibleOpacity = progress
+			} else { // Fade out
+				s.visibleOpacity = 1.0 - progress
+			}
 		}
 		op.InvalidateOp{}.Add(gtx.Ops) // Continua animando o fade
 	}
 
-	// Se não está ativo e não está fazendo fade out, não desenha
-	if !s.IsActive && !s.fading && s.visibleOpacity < 0.01 {
-		return layout.Dimensions{Size: image.Pt(gtx.Dp(s.Size), gtx.Dp(s.Size))} // Ocupa espaço mas não desenha
+	// Se não está logicamente ativo, não está fazendo fade, e está totalmente invisível,
+	// não desenha nada, mas ocupa o espaço definido por `s.Size`.
+	if !s.isActive && !s.isFading && s.visibleOpacity < 0.01 {
+		return layout.Dimensions{Size: image.Pt(gtx.Dp(s.Size), gtx.Dp(s.Size))}
 	}
 
-	// Se estiver ativo ou fazendo fade, solicita redesenho contínuo
-	if s.IsActive || s.fading {
+	// Se estiver ativo (rotação) ou fazendo fade (mudando opacidade),
+	// solicita redesenho contínuo para a animação.
+	if s.isActive || s.isFading {
 		op.InvalidateOp{}.Add(gtx.Ops)
 	}
 
 	// Desenho do spinner
-	sz := gtx.Dp(s.Size)
-	defer op.Save(gtx.Ops).Load()
-	clip.Rect{Max: image.Pt(sz, sz)}.Add(gtx.Ops) // Define a área de desenho
+	spinnerDiameterPx := gtx.Dp(s.Size)
+	// Garante que a área de desenho do clipe corresponda ao tamanho.
+	defer clip.Rect{Max: image.Pt(spinnerDiameterPx, spinnerDiameterPx)}.Push(gtx.Ops).Pop()
 
-	center := f32.Pt(float32(sz)/2, float32(sz)/2)
-	padding := float32(gtx.Dp(s.SegmentWidth))/2 + 1 // Metade da largura + pequeno extra
+	center := f32.Pt(float32(spinnerDiameterPx)/2, float32(spinnerDiameterPx)/2)
+	segmentWidthPx := float32(gtx.Dp(s.SegmentWidth))
+	// O raio efetivo considera a metade da largura do segmento para que as bordas não saiam do círculo.
+	padding := segmentWidthPx/2 + 1 // Pequeno ajuste para evitar corte de bordas arredondadas
 	effectiveRadius := center.X - padding
-	if effectiveRadius <= 1 {
-		return layout.Dimensions{Size: image.Pt(sz, sz)}
+	if effectiveRadius <= 1 { // Muito pequeno para desenhar segmentos
+		return layout.Dimensions{Size: image.Pt(spinnerDiameterPx, spinnerDiameterPx)}
 	}
 
-	transform := op.Affine(f32.Affine2D{}.Offset(center))
-	defer transform.Push(gtx.Ops).Pop()
+	// Salva e aplica a transformação de offset para o centro do spinner.
+	offsetTransform := op.Offset(center).Push(gtx.Ops)
+	defer offsetTransform.Pop()
 
-	segmentStepAngle := 2.0 * math.Pi / float32(s.NumSegments) // Em radianos
+	segmentAngleStepRad := 2.0 * math.Pi / float32(s.NumSegments) // Ângulo entre segmentos em radianos
 
 	for i := 0; i < s.NumSegments; i++ {
-		currentAngleRad := (s.angle * math.Pi / 180.0) + (float32(i) * segmentStepAngle)
+		// Calcula o ângulo do segmento atual, considerando a rotação global `s.currentAngle`.
+		segmentRotationRad := s.currentAngle * math.Pi / 180.0 // Converte `currentAngle` para radianos
+		currentSegmentAngleRad := segmentRotationRad + (float32(i) * segmentAngleStepRad)
 
-		alpha := uint8(255)
-		if s.TrailOpacity {
-			// Cálculo de opacidade não linear para trail mais acentuado
-			// O (1.0 - ...) faz o primeiro segmento (i=0, após rotação) ser o mais opaco
-			opacityFactor := math.Pow(1.0-(float64(i)/float64(s.NumSegments)), 1.5)
-			alpha = uint8(math.Max(5, 255*opacityFactor))
+		// Calcula a opacidade do segmento individual (para efeito de "trilha")
+		var segmentAlpha uint8 = 255
+		// Opacidade decai para segmentos "mais antigos" na trilha.
+		// O segmento `i=0` (após rotação) é o mais opaco.
+		opacityFactor := math.Pow(1.0-(float64(i)/float64(s.NumSegments)), 1.8) // Ajuste o expoente para a força da trilha
+		segmentAlpha = uint8(math.Max(20, 255*opacityFactor))                   // Mínimo de opacidade para visibilidade
+
+		// Aplica a opacidade geral do fade (s.visibleOpacity)
+		finalSegmentOpacity := uint8(float32(segmentAlpha) * s.visibleOpacity)
+		if finalSegmentOpacity < 5 && s.visibleOpacity > 0.01 { // Garante um mínimo se o spinner estiver visível
+			finalSegmentOpacity = 5
+		}
+		if s.visibleOpacity < 0.01 { // Se quase invisível, força opacidade zero para o segmento
+			finalSegmentOpacity = 0
 		}
 
-		// Aplicar a opacidade geral do fade
-		finalAlpha := uint8(float32(alpha) * s.visibleOpacity)
-		if finalAlpha < 5 && s.visibleOpacity > 0 { // Garante um mínimo se visível
-			finalAlpha = 5
-		}
+		segmentColorWithOpacity := s.Color
+		segmentColorWithOpacity.A = finalSegmentOpacity
 
-		segColor := s.Color
-		segColor.A = finalAlpha // Define a opacidade do segmento
+		// Calcula os pontos inicial e final do segmento
+		innerRadius := effectiveRadius * (1.0 - s.SegmentLength) // Ponto inicial do segmento (mais próximo ao centro)
 
-		// Posição inicial e final do segmento
-		startRadius := effectiveRadius * (1.0 - s.SegmentLength)
-
-		// Rotacionar pontos
-		startX := startRadius * float32(math.Cos(float64(currentAngleRad)))
-		startY := startRadius * float32(math.Sin(float64(currentAngleRad)))
-		endX := effectiveRadius * float32(math.Cos(float64(currentAngleRad)))
-		endY := effectiveRadius * float32(math.Sin(float64(currentAngleRad)))
+		startX := innerRadius * float32(math.Cos(float64(currentSegmentAngleRad)))
+		startY := innerRadius * float32(math.Sin(float64(currentSegmentAngleRad)))
+		endX := effectiveRadius * float32(math.Cos(float64(currentSegmentAngleRad)))
+		endY := effectiveRadius * float32(math.Sin(float64(currentSegmentAngleRad)))
 
 		var path clip.Path
 		path.Begin(gtx.Ops)
 		path.MoveTo(f32.Pt(startX, startY))
 		path.LineTo(f32.Pt(endX, endY))
-
-		// Desenhar a linha com espessura e extremidades arredondadas
-		paint.StrokeShape(gtx.Ops, segColor, clip.Stroke{
+		// Desenha o segmento como uma linha com espessura e extremidades arredondadas.
+		paint.StrokeShape(gtx.Ops, segmentColorWithOpacity, clip.Stroke{
 			Path:  path.End(),
-			Width: float32(gtx.Dp(s.SegmentWidth)),
-			Cap:   clip.RoundCap,
+			Width: segmentWidthPx,
+			Cap:   clip.RoundCap, // Extremidades arredondadas
 		}.Op())
 	}
 
-	return layout.Dimensions{Size: image.Pt(sz, sz)}
+	return layout.Dimensions{Size: image.Pt(spinnerDiameterPx, spinnerDiameterPx)}
 }
 
-// Destroy deve ser chamado quando o spinner não for mais necessário para parar a goroutine.
+// Destroy deve ser chamado quando o spinner não for mais necessário para parar sua goroutine de animação.
+// Isso é importante para evitar goroutines órfãs.
 func (s *LoadingSpinner) Destroy() {
-	if s.ticker != nil {
-		// Tenta fechar o canal se não estiver já fechado (seguro com select)
-		select {
-		case <-s.stopTicker: // Já fechado
-		default:
-			close(s.stopTicker)
-		}
+	// Tenta fechar o canal `stopTicker` de forma segura, apenas se não estiver já fechado.
+	// Isso sinaliza para a goroutine `runRotationLoop` terminar.
+	select {
+	case <-s.stopTicker: // Canal já fechado ou sendo fechado.
+	default:
+		close(s.stopTicker)
 	}
+	// O ticker em si é parado dentro da goroutine `runRotationLoop` ao sair.
 }

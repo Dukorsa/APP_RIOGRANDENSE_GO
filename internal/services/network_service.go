@@ -1,12 +1,11 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
-	// "strings" // Se precisar de mais manipulação de string
-
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth" // Para SessionData e PermissionManager
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
 	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
@@ -18,6 +17,7 @@ type NetworkService interface {
 	GetAllNetworks(includeInactive bool, userSession *auth.SessionData) ([]*models.NetworkPublic, error)
 	SearchNetworks(term string, buyer *string, includeInactive bool, userSession *auth.SessionData) ([]*models.NetworkPublic, error)
 	GetNetworkByID(networkID uint64, userSession *auth.SessionData) (*models.NetworkPublic, error)
+	GetNetworkByName(name string, userSession *auth.SessionData) (*models.NetworkPublic, error) // Adicionado
 	CreateNetwork(networkData models.NetworkCreate, userSession *auth.SessionData) (*models.NetworkPublic, error)
 	UpdateNetwork(networkID uint64, networkUpdateData models.NetworkUpdate, userSession *auth.SessionData) (*models.NetworkPublic, error)
 	ToggleNetworkStatus(networkID uint64, userSession *auth.SessionData) (*models.NetworkPublic, error)
@@ -38,7 +38,7 @@ func NewNetworkService(
 	pm *auth.PermissionManager,
 ) NetworkService {
 	if repo == nil || auditLog == nil || pm == nil {
-		appLogger.Fatalf("Dependências nulas fornecidas para NewNetworkService")
+		appLogger.Fatalf("Dependências nulas fornecidas para NewNetworkService (repo, auditLog, permManager)")
 	}
 	return &networkServiceImpl{
 		repo:            repo,
@@ -54,7 +54,7 @@ func (s *networkServiceImpl) GetAllNetworks(includeInactive bool, userSession *a
 	}
 	dbNetworks, err := s.repo.GetAll(includeInactive)
 	if err != nil {
-		return nil, err // Erro já logado pelo repo
+		return nil, err // Erro já logado pelo repo.
 	}
 	return models.ToNetworkPublicList(dbNetworks), nil
 }
@@ -64,6 +64,7 @@ func (s *networkServiceImpl) SearchNetworks(term string, buyer *string, includeI
 	if err := s.permManager.CheckPermission(userSession, auth.PermNetworkView, nil); err != nil {
 		return nil, err
 	}
+	// O repositório lida com a normalização de `term` e `buyer` para a busca.
 	dbNetworks, err := s.repo.Search(term, buyer, includeInactive)
 	if err != nil {
 		return nil, err
@@ -78,7 +79,24 @@ func (s *networkServiceImpl) GetNetworkByID(networkID uint64, userSession *auth.
 	}
 	dbNetwork, err := s.repo.GetByID(networkID)
 	if err != nil {
-		return nil, err // Repo trata ErrNotFound
+		// Repo trata ErrNotFound e outros erros de DB.
+		return nil, err
+	}
+	return models.ToNetworkPublic(dbNetwork), nil
+}
+
+// GetNetworkByName busca uma rede pelo nome.
+func (s *networkServiceImpl) GetNetworkByName(name string, userSession *auth.SessionData) (*models.NetworkPublic, error) {
+	if err := s.permManager.CheckPermission(userSession, auth.PermNetworkView, nil); err != nil {
+		return nil, err
+	}
+	normalizedName := strings.ToLower(strings.TrimSpace(name))
+	if normalizedName == "" {
+		return nil, fmt.Errorf("%w: nome da rede para busca não pode ser vazio", appErrors.ErrInvalidInput)
+	}
+	dbNetwork, err := s.repo.GetByName(normalizedName)
+	if err != nil {
+		return nil, err
 	}
 	return models.ToNetworkPublic(dbNetwork), nil
 }
@@ -91,20 +109,31 @@ func (s *networkServiceImpl) CreateNetwork(networkData models.NetworkCreate, use
 	}
 
 	// 2. Validar e Limpar Dados de Entrada
-	if err := networkData.CleanAndValidate(); err != nil { // Chama método do modelo
+	// `CleanAndValidate` normaliza `Name` para minúsculas e `Buyer` para Title Case.
+	if err := networkData.CleanAndValidate(); err != nil {
 		appLogger.Warnf("Dados de criação de rede inválidos para '%s': %v", networkData.Name, err)
-		return nil, err // Retorna o ValidationError do CleanAndValidate
+		return nil, err // Retorna o ValidationError.
 	}
 
-	// 3. Chamar Repositório
-	// O repositório é responsável por verificar a unicidade do nome (case-insensitive).
+	// 3. Verificar Unicidade do Nome (case-insensitive, já que `networkData.Name` está em minúsculas).
+	// O repositório também fará essa checagem, mas é bom ter no serviço para feedback mais rápido.
+	if _, err := s.repo.GetByName(networkData.Name); err == nil {
+		// Se não houve erro, significa que uma rede com esse nome já existe.
+		return nil, fmt.Errorf("%w: já existe uma rede cadastrada com o nome '%s'", appErrors.ErrConflict, networkData.Name)
+	} else if !errors.Is(err, appErrors.ErrNotFound) {
+		// Se o erro for diferente de ErrNotFound, é um problema na consulta.
+		return nil, appErrors.WrapErrorf(err, "erro ao verificar unicidade do nome da rede '%s'", networkData.Name)
+	}
+	// Se ErrNotFound, o nome está disponível.
+
+	// 4. Chamar Repositório
 	dbNetwork, err := s.repo.Create(networkData, userSession.Username)
 	if err != nil {
-		// Erros como ErrConflict (nome já existe) ou ErrDatabase são tratados e logados pelo repo.
+		// Erros como ErrConflict (se houver race condition) ou ErrDatabase são tratados pelo repo.
 		return nil, err
 	}
 
-	// 4. Log de Auditoria
+	// 5. Log de Auditoria
 	logEntry := models.AuditLogEntry{
 		Action:      "NETWORK_CREATE",
 		Description: fmt.Sprintf("Nova rede '%s' (Comprador: %s) criada.", dbNetwork.Name, dbNetwork.Buyer),
@@ -112,7 +141,7 @@ func (s *networkServiceImpl) CreateNetwork(networkData models.NetworkCreate, use
 		Metadata:    map[string]interface{}{"network_id": dbNetwork.ID, "name": dbNetwork.Name, "buyer": dbNetwork.Buyer},
 	}
 	if logErr := s.auditLogService.LogAction(logEntry, userSession); logErr != nil {
-		appLogger.Warnf("Falha ao registrar log de auditoria para criação da rede %s: %v", dbNetwork.Name, logErr)
+		appLogger.Warnf("Falha ao registrar log de auditoria para criação da rede '%s': %v", dbNetwork.Name, logErr)
 	}
 
 	return models.ToNetworkPublic(dbNetwork), nil
@@ -126,50 +155,70 @@ func (s *networkServiceImpl) UpdateNetwork(networkID uint64, networkUpdateData m
 	}
 
 	// 2. Validar e Limpar Dados de Entrada
+	// `CleanAndValidate` normaliza os campos fornecidos.
 	if err := networkUpdateData.CleanAndValidate(); err != nil {
 		appLogger.Warnf("Dados de atualização de rede inválidos para ID %d: %v", networkID, err)
 		return nil, err
 	}
 
-	// 3. Verificar se há algo para atualizar
+	// 3. Verificar se há algo para atualizar (opcional, o repo pode lidar com isso).
 	if networkUpdateData.Name == nil && networkUpdateData.Buyer == nil && networkUpdateData.Status == nil {
 		appLogger.Infof("Nenhum campo fornecido para atualização da rede ID %d.", networkID)
-		// Retornar a rede existente sem fazer nada ou um erro de input inválido?
-		// Por ora, vamos buscar e retornar a rede existente.
-		dbExistingNetwork, errGet := s.repo.GetByID(networkID)
+		// Retornar a rede existente sem fazer nada.
+		existingNetwork, errGet := s.repo.GetByID(networkID)
 		if errGet != nil {
-			return nil, errGet // Trata NotFound ou DB error
+			return nil, errGet // Trata NotFound ou DB error.
 		}
-		return models.ToNetworkPublic(dbExistingNetwork), nil
+		return models.ToNetworkPublic(existingNetwork), nil
 	}
 
-	// 4. Chamar Repositório
-	// O repositório verificará a unicidade do nome se ele for alterado.
+	// 4. Se o nome estiver sendo alterado, verificar unicidade do novo nome.
+	if networkUpdateData.Name != nil {
+		// `*networkUpdateData.Name` já está em minúsculas devido a `CleanAndValidate`.
+		existingByName, errGet := s.repo.GetByName(*networkUpdateData.Name)
+		// Se encontrou uma rede com o novo nome E essa rede não é a que estamos atualizando.
+		if errGet == nil && existingByName.ID != networkID {
+			return nil, fmt.Errorf("%w: já existe outra rede com o nome '%s'", appErrors.ErrConflict, *networkUpdateData.Name)
+		}
+		if errGet != nil && !errors.Is(errGet, appErrors.ErrNotFound) {
+			return nil, appErrors.WrapErrorf(errGet, "erro ao verificar novo nome para atualização da rede ID %d", networkID)
+		}
+	}
+
+	// 5. Chamar Repositório
 	dbNetwork, err := s.repo.Update(networkID, networkUpdateData, userSession.Username)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Log de Auditoria
-	updatedFields := []string{}
+	// 6. Log de Auditoria
+	updatedFieldsLog := []string{}
+	meta := map[string]interface{}{"network_id": dbNetwork.ID, "name_after_update": dbNetwork.Name}
 	if networkUpdateData.Name != nil {
-		updatedFields = append(updatedFields, "name")
+		updatedFieldsLog = append(updatedFieldsLog, fmt.Sprintf("nome para '%s'", *networkUpdateData.Name))
+		meta["new_name"] = *networkUpdateData.Name
 	}
 	if networkUpdateData.Buyer != nil {
-		updatedFields = append(updatedFields, "buyer")
+		updatedFieldsLog = append(updatedFieldsLog, fmt.Sprintf("comprador para '%s'", *networkUpdateData.Buyer))
+		meta["new_buyer"] = *networkUpdateData.Buyer
 	}
 	if networkUpdateData.Status != nil {
-		updatedFields = append(updatedFields, "status")
+		statusStr := "Inativo"
+		if *networkUpdateData.Status {
+			statusStr = "Ativo"
+		}
+		updatedFieldsLog = append(updatedFieldsLog, fmt.Sprintf("status para %s", statusStr))
+		meta["new_status"] = *networkUpdateData.Status
 	}
 
 	logEntry := models.AuditLogEntry{
 		Action:      "NETWORK_UPDATE",
-		Description: fmt.Sprintf("Rede ID %d ('%s') atualizada.", dbNetwork.ID, dbNetwork.Name),
+		Description: fmt.Sprintf("Rede ID %d ('%s') atualizada. Campos alterados: %s.", dbNetwork.ID, dbNetwork.Name, strings.Join(updatedFieldsLog, ", ")),
 		Severity:    "INFO",
-		Metadata:    map[string]interface{}{"network_id": dbNetwork.ID, "updated_fields": updatedFields},
+		Metadata:    meta,
 	}
 	if logErr := s.auditLogService.LogAction(logEntry, userSession); logErr != nil {
-		appLogger.Warnf("Falha ao registrar log de auditoria para atualização da rede ID %s: %v", dbNetwork.ID, logErr)
+		appLogger.Warnf("Falha ao registrar log de auditoria para atualização da rede ID %d: %v", dbNetwork.ID, logErr)
 	}
 
 	return models.ToNetworkPublic(dbNetwork), nil
@@ -185,22 +234,22 @@ func (s *networkServiceImpl) ToggleNetworkStatus(networkID uint64, userSession *
 	// 2. Chamar Repositório
 	dbNetwork, err := s.repo.ToggleStatus(networkID, userSession.Username)
 	if err != nil {
-		return nil, err
+		return nil, err // Erro já logado e formatado pelo repo.
 	}
 
 	// 3. Log de Auditoria
-	newStatusStr := "Ativo"
+	newStatusStr := "Ativa"
 	if !dbNetwork.Status {
-		newStatusStr = "Inativo"
+		newStatusStr = "Inativa"
 	}
 	logEntry := models.AuditLogEntry{
 		Action:      "NETWORK_STATUS_TOGGLE",
 		Description: fmt.Sprintf("Status da rede ID %d ('%s') alterado para %s.", dbNetwork.ID, dbNetwork.Name, newStatusStr),
 		Severity:    "INFO",
-		Metadata:    map[string]interface{}{"network_id": dbNetwork.ID, "new_status": dbNetwork.Status},
+		Metadata:    map[string]interface{}{"network_id": dbNetwork.ID, "new_status": dbNetwork.Status, "network_name": dbNetwork.Name},
 	}
 	if logErr := s.auditLogService.LogAction(logEntry, userSession); logErr != nil {
-		appLogger.Warnf("Falha ao registrar log de auditoria para alteração de status da rede ID %s: %v", dbNetwork.ID, logErr)
+		appLogger.Warnf("Falha ao registrar log de auditoria para alteração de status da rede ID %d: %v", dbNetwork.ID, logErr)
 	}
 
 	return models.ToNetworkPublic(dbNetwork), nil
@@ -208,36 +257,25 @@ func (s *networkServiceImpl) ToggleNetworkStatus(networkID uint64, userSession *
 
 // DeleteNetworks exclui redes em massa.
 func (s *networkServiceImpl) DeleteNetworks(ids []uint64, userSession *auth.SessionData) (int64, error) {
-	// 1. Verificar Permissão
-	// No Python, era require_role('admin'). Em Go, podemos mapear isso para uma permissão se quisermos,
-	// ou manter a checagem de role aqui. Usar uma permissão é mais flexível.
-	// Supondo que exista uma permissão como PermNetworkBulkDelete ou que PermNetworkDelete cubra isso
-	// com uma verificação adicional de que é uma operação de admin se necessário.
-	// Para este exemplo, vamos usar a permissão PermNetworkDelete.
-	// O repositório pode ter uma camada adicional de segurança para bulk operations.
-	// Ou, como no Python, usar uma permissão específica de admin.
-	// Vamos simular o require_role('admin') com uma verificação de permissão mais forte se existir,
-	// ou cair para PermNetworkDelete.
-
-	// Idealmente: if err := s.permManager.CheckPermission(userSession, auth.PermNetworkBulkDelete, nil); err != nil { return 0, err}
-	// Alternativa (se PermNetworkDelete for suficiente e o método do repo só puder ser chamado por admins de qualquer forma):
+	// 1. Verificar Permissão (ex: PermNetworkDelete ou uma permissão mais específica de admin/bulk).
 	if err := s.permManager.CheckPermission(userSession, auth.PermNetworkDelete, nil); err != nil {
 		return 0, err
 	}
-	// Se for estritamente admin, pode-se verificar o role também:
-	// hasAdminRole, _ := s.permManager.HasRole(userSession, "admin")
-	// if !hasAdminRole {
-	//  return 0, appErrors.ErrPermissionDenied // Ou um erro mais específico
+	// Adicionalmente, poderia verificar se o usuário tem um role de admin para operações em massa.
+	// isAdmin, _ := s.permManager.HasRole(userSession, "admin")
+	// if !isAdmin {
+	// 	return 0, fmt.Errorf("%w: apenas administradores podem realizar exclusão em massa de redes", appErrors.ErrPermissionDenied)
 	// }
 
 	if len(ids) == 0 {
-		return 0, appErrors.NewValidationError("Lista de IDs para exclusão não pode ser vazia.", nil)
+		return 0, appErrors.NewValidationError("Lista de IDs para exclusão de redes não pode ser vazia.", nil)
 	}
 
 	// 2. Chamar Repositório
+	// O repositório lida com a exclusão física e pode retornar ErrConflict se houver FKs.
 	deletedCount, err := s.repo.BulkDelete(ids)
 	if err != nil {
-		// Erros como ErrConflict (FK constraint) ou ErrDatabase são tratados e logados pelo repo.
+		// Erros como ErrConflict (FK constraint) ou ErrDatabase são tratados pelo repo.
 		return 0, err
 	}
 
@@ -246,8 +284,8 @@ func (s *networkServiceImpl) DeleteNetworks(ids []uint64, userSession *auth.Sess
 		logEntry := models.AuditLogEntry{
 			Action:      "NETWORK_BULK_DELETE",
 			Description: fmt.Sprintf("%d redes excluídas fisicamente.", deletedCount),
-			Severity:    "WARNING", // Exclusão física é geralmente um Warning ou mais alto
-			Metadata:    map[string]interface{}{"deleted_ids_count": len(ids), "actually_deleted_count": deletedCount, "ids_attempted": idsToString(ids)},
+			Severity:    "WARNING", // Exclusão física é geralmente um Warning ou mais alto.
+			Metadata:    map[string]interface{}{"deleted_ids_count": len(ids), "actually_deleted_count": deletedCount, "ids_attempted_str": idsToStringForLog(ids)},
 		}
 		if logErr := s.auditLogService.LogAction(logEntry, userSession); logErr != nil {
 			appLogger.Warnf("Falha ao registrar log de auditoria para exclusão em massa de redes: %v", logErr)
@@ -256,11 +294,25 @@ func (s *networkServiceImpl) DeleteNetworks(ids []uint64, userSession *auth.Sess
 	return deletedCount, nil
 }
 
-// Helper para converter slice de uint64 para string para log
-func idsToString(ids []uint64) string {
-	strIds := make([]string, len(ids))
-	for i, id := range ids {
-		strIds[i] = fmt.Sprint(id)
+// idsToStringForLog converte um slice de uint64 para uma string CSV para log.
+// Limita o número de IDs na string para evitar logs excessivamente longos.
+func idsToStringForLog(ids []uint64) string {
+	const maxIDsInLog = 20
+	if len(ids) == 0 {
+		return ""
 	}
-	return strings.Join(strIds, ", ")
+	var sb strings.Builder
+	count := 0
+	for _, id := range ids {
+		if count > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(fmt.Sprint(id))
+		count++
+		if count >= maxIDsInLog && len(ids) > maxIDsInLog {
+			sb.WriteString(fmt.Sprintf("... (e mais %d IDs)", len(ids)-maxIDsInLog))
+			break
+		}
+	}
+	return sb.String()
 }
