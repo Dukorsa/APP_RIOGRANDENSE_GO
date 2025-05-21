@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	// "github.com/jaytaylor/html2text" // Opcional: para converter HTML para texto plano
 	// "github.com/vanng822/go-premailer/premailer" // Opcional: para inlining de CSS

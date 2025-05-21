@@ -12,7 +12,7 @@ import (
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/repositories"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/repositories"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 )

@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 )

@@ -9,7 +9,7 @@ import (
 	// "golang.org/x/text/cases" // Para Title Case correto
 	// "golang.org/x/text/language" // Para Title Case correto
 
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 )
 
 // DBNetwork representa a entidade Network (Rede) no banco de dados.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
 	// Para usar theme.Colors.Danger
 	// "time" // Descomentado se simular delay
 
@@ -14,9 +15,9 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"                  // Para AuthenticatorInterface
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"                  // Para Config
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors" // Para verificar ErrInvalidCredentials
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"           // Para AuthenticatorInterface
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"           // Para Config
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core" // Para verificar ErrInvalidCredentials
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui/components"

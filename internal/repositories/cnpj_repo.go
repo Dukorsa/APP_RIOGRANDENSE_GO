@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause" // Para OnConflict em upserts, se necessário
 
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils" // Para IsValidCNPJ se a validação fosse aqui

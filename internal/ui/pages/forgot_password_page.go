@@ -15,7 +15,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/ui"

@@ -17,7 +17,7 @@ import (
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth" // Para SessionData (se admin estiver criando)
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data/models"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/services"

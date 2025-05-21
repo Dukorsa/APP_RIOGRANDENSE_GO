@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/errors"
+	appErrors "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core"
 	// "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/utils" // Se a validação de dígitos do CNPJ estivesse aqui
 )
 
