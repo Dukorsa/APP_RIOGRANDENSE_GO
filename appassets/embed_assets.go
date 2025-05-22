@@ -1,6 +1,6 @@
 package appassets
 
-import _ "embed"
+import "embed"
 
-//go:embed templates/emails/notification.html
-var NotificationEmailTemplate string
+//go:embed templates/emails/*
+var EmailTemplatesFS embed.FS
