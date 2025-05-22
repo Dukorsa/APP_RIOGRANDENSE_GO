@@ -3,19 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- O título da aba do email não é muito relevante, mas mantemos -->
     <title>{{.Title}} - {{.AppName}}</title>
     <style>
-        /* Reset de estilos para compatibilidade entre clientes de e-mail */
+        /* Reset de estilos para compatibilidade */
         body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-        table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+        table { border-collapse: collapse; }
         img { border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
 
         /* Estilos principais */
         body {
             font-family: 'Arial', sans-serif;
             line-height: 1.6;
-            color: #333333; /* Cor de texto padrão */
+            color: #333333;
             background-color: #f6f6f6;
             margin: 0;
             padding: 20px;
@@ -30,18 +29,13 @@
             border: 1px solid #e0e0e0;
         }
 
-        /* Cores (você precisará passar um mapa/struct "Colors" para o template) */
-        {{$primaryColor := .Colors.Primary | default "#1A659E"}}
-        {{$primaryDarkColor := .Colors.PrimaryDark | default "#0F4C7B"}}
-        {{$primaryLightColor := .Colors.PrimaryLight | default "#4D8DBC"}}
-        {{$grey50Color := .Colors.Grey50 | default "#f8f9fa"}}
-
+        /* Cores definidas via template */
         .header {
-            background-color: {{$primaryColor}};
+            background-color: {{.Colors.Primary | default "#1A659E"}};
             color: #ffffff;
             padding: 30px;
             text-align: center;
-            border-bottom: 5px solid {{$primaryDarkColor}};
+            border-bottom: 5px solid {{.Colors.PrimaryDark | default "#0F4C7B"}};
         }
         .header h1 {
             margin: 0;
@@ -53,25 +47,25 @@
             text-align: left;
         }
         .content h2 {
-            color: {{$primaryColor}};
+            color: {{.Colors.Primary | default "#1A659E"}};
             margin-top: 0;
         }
         .content p {
-             margin-bottom: 15px;
+            margin-bottom: 15px;
         }
         .message-content {
             margin: 20px 0;
             padding: 15px;
-            background-color: {{$grey50Color}};
-            border-left: 4px solid {{$primaryColor}}; /* Linha lateral */
+            background-color: {{.Colors.Grey50 | default "#f8f9fa"}};
+            border-left: 4px solid {{.Colors.Primary | default "#1A659E"}};
             border-radius: 4px;
         }
 
         .button {
             display: inline-block;
-            background-color: {{$primaryColor}};
-            color: #ffffff !important; /* Garante cor do texto branca */
-            text-decoration: none !important; /* Garante sem sublinhado */
+            background-color: {{.Colors.Primary | default "#1A659E"}};
+            color: #ffffff !important;
+            text-decoration: none !important;
             padding: 12px 24px;
             border-radius: 5px;
             margin: 20px 0;
@@ -79,8 +73,7 @@
             font-weight: bold;
         }
         .button:hover {
-            background-color: {{$primaryLightColor}};
-            text-decoration: none !important;
+            background-color: {{.Colors.PrimaryLight | default "#4D8DBC"}};
         }
 
         .footer {
@@ -91,11 +84,11 @@
             color: #777777;
             border-top: 1px solid #e0e0e0;
         }
-         .footer p {
+        .footer p {
             margin: 5px 0;
         }
         .footer a {
-            color: {{$primaryColor}};
+            color: {{.Colors.Primary | default "#1A659E"}};
             text-decoration: none;
         }
         .footer a:hover {
@@ -105,25 +98,22 @@
 </head>
 <body>
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" class="email-container">
-        <!-- Header -->
         <tr>
             <td class="header">
                 <h1>{{.AppName}}</h1>
             </td>
         </tr>
 
-        <!-- Conteúdo -->
         <tr>
             <td class="content">
                 <h2>{{.Title}}</h2>
 
                 <div class="message-content">
-                    {{.Message}}  <!-- Se Message for template.HTML, será renderizado como HTML -->
-                                 <!-- Se for string, será escapado (seguro) -->
+                    {{.Message}}
                 </div>
 
                 {{if .ActionURL}}
-                <p style="text-align: center;"> {# Centraliza o botão #}
+                <p style="text-align: center;">
                     <a href="{{.ActionURL}}" class="button">
                         {{if .ActionText}}{{.ActionText}}{{else}}Acessar{{end}}
                     </a>
@@ -134,22 +124,17 @@
             </td>
         </tr>
 
-        <!-- Footer -->
         <tr>
             <td class="footer">
-                 <p>
+                <p>
                     Atenciosamente,<br>
                     Equipe {{.AppName}}
                 </p>
-                 <p>
+                <p>
                     <a href="mailto:{{.SupportEmail}}">{{.SupportEmail}}</a>
                 </p>
                 <p style="margin-top: 15px;">
                     Este é um e-mail automático, por favor não responda diretamente.<br>
-                    {{/* Se você tiver um settings.APP_URL global no contexto: */}}
-                    {{/* {{if .Settings.APP_URL}} */}}
-                    {{/* <a href="{{.Settings.APP_URL}}/unsubscribe" style="color: #888;">Gerenciar preferências de notificação</a> */}}
-                    {{/* {{end}} */}}
                 </p>
                 <p style="margin-top: 10px;">
                     © {{.Year}} {{.AppName}}. Todos os direitos reservados.
