@@ -241,7 +241,7 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 	logCtx.Infof("Sessão criada com ID: %s", sessionID)
 
 	currentLoginSessionDataForLog := sessionData // Cria uma cópia valor
-	currentLoginSessionDataForLog.ID = sessionID  // Adiciona o ID da sessão
+	currentLoginSessionDataForLog.ID = sessionID // Adiciona o ID da sessão
 
 	// Passa o endereço de currentLoginSessionDataForLog, pois *SessionData implementa LoggableSession.
 	a.auditLogService.LogAction(models.AuditLogEntry{
@@ -252,7 +252,7 @@ func (a *authenticatorImpl) AuthenticateUser(usernameOrEmail, password, ipAddres
 		UserID:      &user.ID,
 		IPAddress:   &ipAddress,
 		Metadata:    map[string]interface{}{"user_id": user.ID.String(), "session_id_prefix": sessionID[:8]},
-	}, ¤tLoginSessionDataForLog)
+	}, &currentLoginSessionDataForLog)
 
 	userPublicData := &models.UserPublic{
 		ID:        user.ID,

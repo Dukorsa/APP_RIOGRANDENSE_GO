@@ -9,7 +9,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/auth"
-	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config"
+	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/config" // O pacote aqui é 'config'
 	appLogger "github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/core/logger"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/data"
 	"github.com/Dukorsa/APP_RIOGRANDENSE_GO/internal/repositories"
@@ -24,7 +24,8 @@ func main() {
 
 func run() {
 	// --- 1. Carregar Configurações ---
-	cfg, err := core.LoadConfig(".env")
+	// CORREÇÃO: Usar 'config.LoadConfig' em vez de 'core.LoadConfig'
+	cfg, err := config.LoadConfig(".env")
 	if err != nil {
 		log.Fatalf("Erro CRÍTICO ao carregar configuração: %v", err)
 	}
@@ -39,7 +40,6 @@ func run() {
 	appLogger.Info("=====================================================")
 
 	// --- 3. Inicializar Banco de Dados ---
-	// InitializeDB retorna *gorm.DB
 	db, err := data.InitializeDB(cfg)
 	if err != nil {
 		appLogger.Fatalf("Erro CRÍTICO ao inicializar banco de dados: %v", err)
@@ -54,22 +54,18 @@ func run() {
 	appLogger.Info("Banco de dados inicializado com sucesso.")
 
 	// --- 4. Inicializar Repositórios e PermissionManager Global ---
-	// RoleRepository é necessário para o PermissionManager e RoleService
 	roleRepo := repositories.NewGormRoleRepository(db)
+	userRepo := repositories.NewGormUserRepository(db) // CORREÇÃO: userRepo é necessário para NewUserService
 
-	// Inicializar PermissionManager Global (deve ser feito antes dos serviços que dependem dele)
 	auth.InitGlobalPermissionManager(roleRepo)
-	permManager := auth.GetPermissionManager() // Obter a instância global
+	permManager := auth.GetPermissionManager()
 
-	// Seed de Roles e Permissões Iniciais (após o PermissionManager estar pronto)
 	if err := auth.SeedInitialRolesAndPermissions(roleRepo, permManager); err != nil {
 		appLogger.Fatalf("Erro CRÍTICO ao semear roles e permissões iniciais: %v", err)
 	}
 
 	// --- 5. Inicializar Serviços ---
-
-	// EmailService (pode falhar graciosamente)
-	var emailService services.EmailService // Declarado como interface
+	var emailService services.EmailService
 	if cfg.EmailSMTPServer != "" && cfg.EmailUser != "" {
 		esInstance, errMail := services.NewEmailService(cfg)
 		if errMail != nil {
@@ -82,45 +78,27 @@ func run() {
 		appLogger.Info("Configuração de Email incompleta. EmailService não será inicializado.")
 	}
 
-	// AuditLogRepository
 	auditLogRepo := repositories.NewGormAuditLogRepository(db)
+	sessionManager := auth.NewSessionManager(cfg, db, nil) // Passando nil para AuditLogService aqui é aceitável se SessionManager não o usa ativamente.
 
-	// SessionManager
-	// NewSessionManager foi ajustado para não exigir AuditLogService na construção para evitar ciclo.
-	// Se SessionManager precisar logar, ele pode usar appLogger ou ter o AuditLogService injetado depois.
-	// O construtor do SessionManager aceita `db interface{}` e `auditLogService services.AuditLogService`.
-	// Passando nil para auditLogService se não for usado na construção ou se a assinatura permitir.
-	// A assinatura em session.go é: NewSessionManager(cfg *core.Config, db interface{}, auditLogService services.AuditLogService)
-	// Vamos passar nil para auditLogService para sessionManager e criar AuditLogService depois.
-	// A implementação atual do SessionManager armazena o auditLogService mas não o usa ativamente.
-	// Para AuditLogService precisar do SessionManager:
-	sessionManager := auth.NewSessionManager(cfg, db, nil) // Passando nil para AuditLogService
-
-	// AuditLogService (agora pode receber o SessionManager)
 	auditLogService := services.NewAuditLogService(auditLogRepo, sessionManager)
-
-	// Se SessionManager realmente precisasse do AuditLogService, você poderia injetá-lo agora:
-	// sessionManager.SetAuditLogService(auditLogService) // (se tal método existisse)
-	// Ou, o SessionManager usa o appLogger global para seus próprios logs internos.
 
 	sessionManager.StartCleanupGoroutine()
 	defer sessionManager.Shutdown()
 
-	// Authenticator
-	// NewAuthenticator precisa ser capaz de lidar com *gorm.DB ou seu UserRepository interno precisa ser GORM-compatível.
-	// Assumindo que NewAuthenticator foi ajustado para instanciar NewGormUserRepository(db)
 	authenticator := auth.NewAuthenticator(cfg, db, sessionManager, auditLogService)
 
 	// Outros Repositórios
-	userRepo := repositories.NewGormUserRepository(db)
 	networkRepo := repositories.NewGormNetworkRepository(db)
 	cnpjRepo := repositories.NewGormCNPJRepository(db)
 	importMetadataRepo := repositories.NewGormImportMetadataRepository(db)
 	tituloDireitoRepo := repositories.NewGormTituloDireitoRepository(db)
 	tituloObrigacaoRepo := repositories.NewGormTituloObrigacaoRepository(db)
 
-	// Outros Serviços (agora passando os repositórios e o permManager global)
-	userService := services.NewUserService(db, auditLogService, emailService, cfg, authenticator, sessionManager)
+	// Outros Serviços
+	// CORREÇÃO: Ajustar a chamada para NewUserService para corresponder a uma assinatura provável de 7 argumentos
+	// A assinatura inferida é: (cfg, userRepo, roleRepo, auditLogService, emailService, authenticator, sessionManager)
+	userService := services.NewUserService(cfg, userRepo, roleRepo, auditLogService, emailService, authenticator, sessionManager)
 	roleService := services.NewRoleService(roleRepo, auditLogService, permManager)
 	networkService := services.NewNetworkService(networkRepo, auditLogService, permManager)
 	cnpjService := services.NewCNPJService(cnpjRepo, networkRepo, auditLogService, permManager)
@@ -132,7 +110,6 @@ func run() {
 	gofont.Register()
 	th := material.NewTheme() // Pode ser customizado em internal/ui/theme/theme.go
 
-	// Cria a instância da Janela Principal da Aplicação
 	appWindow := ui.NewAppWindow(
 		th,
 		cfg,
