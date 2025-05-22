@@ -29,13 +29,13 @@
             border: 1px solid #e0e0e0;
         }
 
-        /* Cores definidas via template */
+        /* Cores padrão - serão substituídas por CSS inline via Go template */
         .header {
-            background-color: {{.Colors.Primary | default "#1A659E"}};
+            background-color: #1A659E;
             color: #ffffff;
             padding: 30px;
             text-align: center;
-            border-bottom: 5px solid {{.Colors.PrimaryDark | default "#0F4C7B"}};
+            border-bottom: 5px solid #0F4C7B;
         }
         .header h1 {
             margin: 0;
@@ -47,7 +47,7 @@
             text-align: left;
         }
         .content h2 {
-            color: {{.Colors.Primary | default "#1A659E"}};
+            color: #1A659E;
             margin-top: 0;
         }
         .content p {
@@ -56,14 +56,14 @@
         .message-content {
             margin: 20px 0;
             padding: 15px;
-            background-color: {{.Colors.Grey50 | default "#f8f9fa"}};
-            border-left: 4px solid {{.Colors.Primary | default "#1A659E"}};
+            background-color: #f8f9fa;
+            border-left: 4px solid #1A659E;
             border-radius: 4px;
         }
 
         .button {
             display: inline-block;
-            background-color: {{.Colors.Primary | default "#1A659E"}};
+            background-color: #1A659E;
             color: #ffffff !important;
             text-decoration: none !important;
             padding: 12px 24px;
@@ -73,7 +73,7 @@
             font-weight: bold;
         }
         .button:hover {
-            background-color: {{.Colors.PrimaryLight | default "#4D8DBC"}};
+            background-color: #4D8DBC;
         }
 
         .footer {
@@ -88,7 +88,7 @@
             margin: 5px 0;
         }
         .footer a {
-            color: {{.Colors.Primary | default "#1A659E"}};
+            color: #1A659E;
             text-decoration: none;
         }
         .footer a:hover {
@@ -99,22 +99,22 @@
 <body>
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" class="email-container">
         <tr>
-            <td class="header">
+            <td class="header" {{if .Colors.Primary}}style="background-color: {{.Colors.Primary}}; border-bottom-color: {{.Colors.PrimaryDark | default .Colors.Primary}};"{{end}}>
                 <h1>{{.AppName}}</h1>
             </td>
         </tr>
 
         <tr>
             <td class="content">
-                <h2>{{.Title}}</h2>
+                <h2 {{if .Colors.Primary}}style="color: {{.Colors.Primary}};"{{end}}>{{.Title}}</h2>
 
-                <div class="message-content">
+                <div class="message-content" {{if .Colors.Primary}}style="background-color: {{.Colors.Grey50 | default "#f8f9fa"}}; border-left-color: {{.Colors.Primary}};"{{end}}>
                     {{.Message}}
                 </div>
 
                 {{if .ActionURL}}
                 <p style="text-align: center;">
-                    <a href="{{.ActionURL}}" class="button">
+                    <a href="{{.ActionURL}}" class="button" {{if .Colors.Primary}}style="background-color: {{.Colors.Primary}};"{{end}}>
                         {{if .ActionText}}{{.ActionText}}{{else}}Acessar{{end}}
                     </a>
                 </p>
@@ -131,7 +131,7 @@
                     Equipe {{.AppName}}
                 </p>
                 <p>
-                    <a href="mailto:{{.SupportEmail}}">{{.SupportEmail}}</a>
+                    <a href="mailto:{{.SupportEmail}}" {{if .Colors.Primary}}style="color: {{.Colors.Primary}};"{{end}}>{{.SupportEmail}}</a>
                 </p>
                 <p style="margin-top: 15px;">
                     Este é um e-mail automático, por favor não responda diretamente.<br>
